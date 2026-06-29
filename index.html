@@ -1,15 +1,43 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.5
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.8
   Fecha de esta versión: 2026-06-29
-  Cambios respecto a v1.4: agregado botón "Restablecer
-  catálogo" en Configuración — borra todos los productos
-  actuales (con doble confirmación) y recarga el catálogo de
-  ejemplo de 86 productos. No afecta el historial de ventas.
-  PENDIENTE: construir una vista "solo lectura" tipo PuntoVenta
-  (alguien puede ver resultados/reportes sin acceso de admin
-  completo) — a definir cuando se retome.
+  Cambios respecto a v1.7: construido el módulo real de Stock
+  (antes era placeholder). Nueva colección "insumos" (nombre,
+  unidad, stockActual, stockMinimo) con CRUD y alerta visual de
+  bajo stock. Cada producto puede tener una "receta" (insumos +
+  cantidad que usa por unidad vendida — simplificación: la
+  receta es por producto, no por tamaño/variante). Al cobrar una
+  venta, se descuenta automáticamente el stock de los insumos
+  usados vía batch de Firestore (FieldValue.increment negativo).
+  REQUIERE actualizar las reglas de Firestore para agregar la
+  colección "insumos" (ver mensaje del chat).
+  PENDIENTE: si se necesita receta distinta por tamaño (ej. una
+  pizza Grande usa más mozzarella que una Chica), hay que
+  rediseñar la receta como un mapa por tamaño en vez de una sola
+  lista por producto.
+  ──
+  Cambios respecto a v1.6: agregadas las pestañas placeholder
+  para los 3 plus (Pedidos, Stock, Empleados) — antes activar el
+  flag no mostraba nada. Ahora, si el flag está prendido,
+  aparece una pestaña con aviso "Próximamente". Pedidos y
+  Empleados solo visibles para el Dueño; Stock visible también
+  para Punto de Venta (es operativo). Próximo paso decidido:
+  construir Stock como funcionalidad real (no solo placeholder).
+  ──
+  Cambios respecto a v1.5: agregado sistema de roles. "Dueño"
+  (login Google/email) ve todo: Caja, Menú, Reportes, Historial,
+  Configuración. "Punto de Venta" (botón en login → PIN propio
+  → sesión anónima de Firebase) solo ve Caja y Menú — no ve
+  Reportes ni Historial ni Configuración, ni a nivel UI ni a
+  nivel de reglas de Firestore (lectura de ventas restringida
+  al dueño). El PIN de Punto de Venta se define y cambia desde
+  Configuración → Acceso Punto de Venta (default 2468 si no se
+  configuró). REQUIERE: activar el proveedor "Anónimo" en
+  Firebase Authentication → Sign-in method, y actualizar las
+  reglas de Firestore (ver abajo en el chat / pedírselas a
+  Claude si se perdió el mensaje).
   ──
   v1.3: esquema de precios cambiado de tamaños fijos
   (Chica/Mediana/Grande) a tamaños con nombre libre y cantidad
@@ -348,6 +376,9 @@
       <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84c-.21 1.13-.84 2.07-1.8 2.71v2.26h2.92c1.71-1.57 2.68-3.88 2.68-6.61z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.81 5.96-2.18l-2.92-2.26c-.81.54-1.84.87-3.04.87-2.34 0-4.32-1.58-5.03-3.71H.96v2.33C2.44 15.98 5.48 18 9 18z"/><path fill="#FBBC05" d="M3.97 10.72A5.41 5.41 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A8.96 8.96 0 0 0 0 9c0 1.45.35 2.82.96 4.05l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0 5.48 0 2.44 2.02.96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
       Iniciar sesión con Google
     </button>
+    <button class="btn-secondary" id="loginCajeroBtn" style="width:100%; margin-top:8px; color:var(--naranja); border-color:var(--naranja);">
+      🧾 Ingresar como Punto de Venta
+    </button>
   </div>
 </div>
 
@@ -374,6 +405,9 @@
   <nav class="tabs">
     <button class="tab-btn active" data-view="caja">Caja</button>
     <button class="tab-btn" data-view="menu">Menú</button>
+    <button class="tab-btn" data-view="pedidos" style="display:none;">Pedidos</button>
+    <button class="tab-btn" data-view="stock" style="display:none;">Stock</button>
+    <button class="tab-btn" data-view="empleados" style="display:none;">Empleados</button>
     <button class="tab-btn" data-view="reportes">Reportes</button>
     <button class="tab-btn" data-view="historial">Historial</button>
     <button class="tab-btn" data-view="configuracion">Configuración</button>
@@ -450,6 +484,32 @@
       </div>
     </section>
 
+    <!-- VISTA PEDIDOS (PLACEHOLDER PLUS) -->
+    <section class="view" id="view-pedidos">
+      <div class="plus-locked">
+        <span class="ti-lock">🛵</span>
+        <h4 style="margin-bottom:6px;">Pedidos online</h4>
+        <p>Próximamente: tus clientes van a poder pedir desde su celular y seguir el estado de su pedido en tiempo real.</p>
+      </div>
+    </section>
+
+    <!-- VISTA STOCK -->
+    <section class="view" id="view-stock">
+      <div class="menu-toolbar">
+        <button class="btn-tomate" style="width:auto; padding:10px 18px;" id="nuevoInsumoBtn">+ Nuevo insumo</button>
+      </div>
+      <div id="insumosLista"></div>
+    </section>
+
+    <!-- VISTA EMPLEADOS (PLACEHOLDER PLUS) -->
+    <section class="view" id="view-empleados">
+      <div class="plus-locked">
+        <span class="ti-lock">👥</span>
+        <h4 style="margin-bottom:6px;">Gestión de empleados</h4>
+        <p>Próximamente: turnos, accesos y permisos por empleado.</p>
+      </div>
+    </section>
+
     <!-- VISTA CONFIGURACIÓN -->
     <section class="view" id="view-configuracion">
       <div class="config-section">
@@ -459,6 +519,13 @@
         <label style="font-size:0.78rem; color:var(--muted); display:block; margin:10px 0 4px;">Horario de atención</label>
         <input type="text" id="cfgHorario" placeholder="Lun a Dom 19:00 - 00:00">
         <button class="btn-tomate" style="margin-top:12px;" id="guardarCfgBtn">Guardar</button>
+      </div>
+
+      <div class="config-section">
+        <h4>Acceso Punto de Venta</h4>
+        <p style="font-size:0.78rem; color:var(--muted); margin-bottom:8px;">PIN para que tu empleado/cajero entre solo a Caja y Menú, sin ver Reportes, Historial ni esta Configuración.</p>
+        <input type="text" id="cfgPinCajero" inputmode="numeric" maxlength="6" placeholder="Ej: 2468">
+        <button class="btn-tomate" style="margin-top:10px;" id="guardarPinCajeroBtn">Guardar PIN</button>
       </div>
 
       <div class="config-section">
@@ -527,9 +594,50 @@
     <label style="margin-top:10px;">
       <input type="checkbox" id="prodActivo" checked style="width:auto; margin-right:6px;">Producto activo
     </label>
+    <label style="margin-top:10px;">Receta (insumos que descuenta del stock al vender — opcional)</label>
+    <div id="prodRecetaLista"></div>
+    <button type="button" class="btn-secondary" id="prodAgregarInsumoBtn" style="margin-top:6px; font-size:0.8rem; padding:8px;">+ Agregar insumo a la receta</button>
     <div class="modal-actions">
       <button class="btn-secondary" id="modalProductoCancel">Cancelar</button>
       <button class="btn-confirm" id="modalProductoConfirm">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: insumo (alta/edición de stock) -->
+<div class="modal-overlay" id="modalInsumo">
+  <div class="modal-box">
+    <h3 id="modalInsumoTitulo">Nuevo insumo</h3>
+    <label>Nombre</label>
+    <input type="text" id="insNombre" placeholder="Harina, Mozzarella, Coca 1.5L...">
+    <label>Unidad</label>
+    <select id="insUnidad">
+      <option value="kg">kg</option>
+      <option value="g">g</option>
+      <option value="L">L</option>
+      <option value="ml">ml</option>
+      <option value="unidad">unidad</option>
+    </select>
+    <label>Stock actual</label>
+    <input type="number" id="insStockActual" step="0.01">
+    <label>Stock mínimo (para alerta)</label>
+    <input type="number" id="insStockMinimo" step="0.01">
+    <div class="modal-actions">
+      <button class="btn-secondary" id="modalInsumoCancel">Cancelar</button>
+      <button class="btn-confirm" id="modalInsumoConfirm">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: PIN PUNTO DE VENTA -->
+<div class="modal-overlay" id="modalPinCajero">
+  <div class="modal-box" style="text-align:center; max-width:300px;">
+    <h3>🧾 Punto de Venta</h3>
+    <input type="password" id="pinCajeroInput" inputmode="numeric" maxlength="6" placeholder="••••" style="text-align:center; letter-spacing:0.4em; font-size:1.3rem; margin-top:10px;">
+    <div class="login-error" id="pinCajeroError"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="pinCajeroCancelBtn">Cancelar</button>
+      <button class="btn-confirm" id="pinCajeroConfirmBtn">Entrar</button>
     </div>
   </div>
 </div>
@@ -596,6 +704,10 @@
   let productoSeleccionado = null;
   let editandoProductoId = null;
   let featuresActuales = { pedidosOnlineHabilitado: false, stockHabilitado: false, empleadosHabilitado: false };
+  let rolActual = null; // 'dueño' | 'cajero'
+  let pinCajeroActual = '2468'; // default hasta que se cargue configuracion
+  let insumos = [];
+  let editandoInsumoId = null;
 
   function toast(msg) {
     const box = document.getElementById('toastBox');
@@ -606,16 +718,31 @@
     setTimeout(() => t.remove(), 3000);
   }
 
+  function aplicarRestriccionesPorRol() {
+    const tabsSoloDuenio = document.querySelectorAll('.tab-btn[data-view="reportes"], .tab-btn[data-view="historial"], .tab-btn[data-view="configuracion"]');
+    tabsSoloDuenio.forEach(t => t.style.display = (rolActual === 'cajero') ? 'none' : '');
+    if (rolActual === 'cajero') {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelector('.tab-btn[data-view="caja"]').classList.add('active');
+      document.getElementById('view-caja').classList.add('active');
+    }
+  }
+
   /* ── AUTH ── */
   auth.onAuthStateChanged(user => {
     document.getElementById('loadingScreen').classList.add('hide');
     if (user) {
+      rolActual = user.isAnonymous ? 'cajero' : 'dueño';
       document.getElementById('loginScreen').classList.remove('active');
       document.getElementById('app').classList.add('active');
       cargarProductos();
+      cargarInsumos();
       cargarConfiguracion();
-      escucharVentasHoy();
+      if (rolActual === 'dueño') escucharVentasHoy();
+      aplicarRestriccionesPorRol();
     } else {
+      rolActual = null;
       document.getElementById('app').classList.remove('active');
       document.getElementById('loginScreen').classList.add('active');
     }
@@ -637,6 +764,31 @@
     });
   });
 
+  /* ── LOGIN PUNTO DE VENTA (PIN propio + sesión anónima) ── */
+  document.getElementById('loginCajeroBtn').addEventListener('click', () => {
+    db.collection('configuracion').doc('general').get().then(doc => {
+      pinCajeroActual = (doc.exists && doc.data().pinCajero) ? doc.data().pinCajero : '2468';
+      document.getElementById('pinCajeroInput').value = '';
+      document.getElementById('pinCajeroError').textContent = '';
+      document.getElementById('modalPinCajero').classList.add('active');
+      setTimeout(() => document.getElementById('pinCajeroInput').focus(), 50);
+    });
+  });
+  document.getElementById('pinCajeroCancelBtn').addEventListener('click', () => document.getElementById('modalPinCajero').classList.remove('active'));
+  document.getElementById('pinCajeroConfirmBtn').addEventListener('click', () => {
+    if (document.getElementById('pinCajeroInput').value === pinCajeroActual) {
+      document.getElementById('modalPinCajero').classList.remove('active');
+      auth.signInAnonymously().catch(() => {
+        document.getElementById('pinCajeroError').textContent = 'No se pudo ingresar, intentá de nuevo';
+      });
+    } else {
+      document.getElementById('pinCajeroError').textContent = 'PIN incorrecto';
+    }
+  });
+  document.getElementById('pinCajeroInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('pinCajeroConfirmBtn').click();
+  });
+
   /* ── DARK / LIGHT ── */
   document.getElementById('darkToggleBtn').addEventListener('click', () => {
     document.body.classList.toggle('light');
@@ -651,6 +803,7 @@
       btn.classList.add('active');
       document.getElementById('view-' + btn.dataset.view).classList.add('active');
       if (btn.dataset.view === 'menu') renderProductosLista();
+      if (btn.dataset.view === 'stock') renderInsumosLista();
       if (btn.dataset.view === 'reportes') escucharVentasHoy();
       if (btn.dataset.view === 'historial') buscarHistorial('hoy');
     });
@@ -885,6 +1038,7 @@
   document.getElementById('cobrarBtn').addEventListener('click', () => {
     if (carrito.length === 0) { toast('El carrito está vacío'); return; }
     const total = carrito.reduce((s, it) => s + it.precio * it.cantidad, 0);
+    const itemsVendidos = carrito.slice();
     db.collection('ventas').add({
       items: carrito,
       total,
@@ -893,6 +1047,7 @@
       fechaDia: new Date().toISOString().slice(0,10)
     }).then(() => {
       toast('Venta registrada — $' + total);
+      descontarStockPorVenta(itemsVendidos);
       carrito = [];
       renderCarrito();
     });
@@ -936,6 +1091,7 @@
   }
 
   let tamanosEditando = [];
+  let recetaEditando = [];
 
   document.getElementById('prodAgregarTamanoBtn').addEventListener('click', () => {
     sincronizarTamanosDesdeInputs();
@@ -951,6 +1107,41 @@
     }));
   }
 
+  function renderRecetaLista() {
+    const cont = document.getElementById('prodRecetaLista');
+    if (insumos.length === 0) {
+      cont.innerHTML = '<p style="font-size:0.75rem; color:var(--muted);">Todavía no hay insumos cargados en Stock.</p>';
+      return;
+    }
+    cont.innerHTML = recetaEditando.map((r, i) => `
+      <div class="size-price-row" data-i="${i}">
+        <select class="receta-insumo" style="flex:1.4;">
+          ${insumos.map(ins => `<option value="${ins.id}" ${ins.id === r.insumoId ? 'selected' : ''}>${ins.nombre} (${ins.unidad})</option>`).join('')}
+        </select>
+        <input type="number" class="receta-cantidad" value="${r.cantidad}" step="0.01" placeholder="Cant.">
+        <button type="button" class="del-tamano" data-i="${i}">✕</button>
+      </div>
+    `).join('');
+    cont.querySelectorAll('.del-tamano').forEach(b => b.addEventListener('click', () => {
+      sincronizarRecetaDesdeInputs();
+      recetaEditando.splice(parseInt(b.dataset.i), 1);
+      renderRecetaLista();
+    }));
+  }
+  function sincronizarRecetaDesdeInputs() {
+    const filas = document.querySelectorAll('#prodRecetaLista .size-price-row');
+    recetaEditando = Array.from(filas).map(fila => ({
+      insumoId: fila.querySelector('.receta-insumo').value,
+      cantidad: parseFloat(fila.querySelector('.receta-cantidad').value) || 0
+    }));
+  }
+  document.getElementById('prodAgregarInsumoBtn').addEventListener('click', () => {
+    if (insumos.length === 0) { toast('Cargá insumos primero en la pestaña Stock'); return; }
+    sincronizarRecetaDesdeInputs();
+    recetaEditando.push({ insumoId: insumos[0].id, cantidad: 0 });
+    renderRecetaLista();
+  });
+
   function abrirModalProducto(id) {
     editandoProductoId = id;
     const p = id ? productos.find(x => x.id === id) : null;
@@ -961,19 +1152,24 @@
     tamanosEditando = p ? Object.entries(p.precios || {}).map(([nombre, precio]) => ({ nombre, precio }))
                          : [{ nombre: 'Único', precio: 0 }];
     renderTamanosLista(tamanosEditando);
+    recetaEditando = p && p.receta ? JSON.parse(JSON.stringify(p.receta)) : [];
+    renderRecetaLista();
     document.getElementById('prodActivo').checked = p ? p.activo : true;
     document.getElementById('modalProducto').classList.add('active');
   }
   document.getElementById('modalProductoCancel').addEventListener('click', () => document.getElementById('modalProducto').classList.remove('active'));
   document.getElementById('modalProductoConfirm').addEventListener('click', () => {
     sincronizarTamanosDesdeInputs();
+    sincronizarRecetaDesdeInputs();
     const precios = {};
     tamanosEditando.forEach(t => { if (t.nombre) precios[t.nombre] = t.precio; });
+    const receta = recetaEditando.filter(r => r.insumoId && r.cantidad > 0);
     const data = {
       nombre: document.getElementById('prodNombre').value.trim(),
       categoria: document.getElementById('prodCategoria').value,
       emoji: document.getElementById('prodEmoji').value.trim(),
       precios,
+      receta,
       activo: document.getElementById('prodActivo').checked
     };
     if (!data.nombre) { toast('Falta el nombre del producto'); return; }
@@ -984,6 +1180,95 @@
       document.getElementById('modalProducto').classList.remove('active');
     });
   });
+
+  /* ── STOCK (INSUMOS) ── */
+  function cargarInsumos() {
+    db.collection('insumos').onSnapshot(snap => {
+      insumos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderInsumosLista();
+    });
+  }
+
+  function renderInsumosLista() {
+    const cont = document.getElementById('insumosLista');
+    if (!cont) return;
+    if (insumos.length === 0) {
+      cont.innerHTML = '<p style="color:var(--muted); font-size:0.85rem;">Todavía no cargaste insumos. Usá "+ Nuevo insumo" para empezar.</p>';
+      return;
+    }
+    cont.innerHTML = insumos.map(ins => {
+      const bajoStock = ins.stockActual <= ins.stockMinimo;
+      return `
+      <div class="producto-row">
+        <div>
+          <div class="producto-row-name">${bajoStock ? '⚠️ ' : ''}${ins.nombre}</div>
+          <div class="producto-row-meta" style="${bajoStock ? 'color:var(--tomate); font-weight:600;' : ''}">
+            Stock: ${ins.stockActual} ${ins.unidad} ${bajoStock ? '— ¡Bajo stock! (mínimo ' + ins.stockMinimo + ')' : '(mínimo ' + ins.stockMinimo + ')'}
+          </div>
+        </div>
+        <div class="row-actions">
+          <button data-editins="${ins.id}">✏️</button>
+          <button data-delins="${ins.id}">🗑️</button>
+        </div>
+      </div>
+    `;
+    }).join('');
+    cont.querySelectorAll('[data-editins]').forEach(b => b.addEventListener('click', () => abrirModalInsumo(b.dataset.editins)));
+    cont.querySelectorAll('[data-delins]').forEach(b => b.addEventListener('click', () => {
+      if (confirm('¿Eliminar este insumo? Los productos que lo usaban en su receta van a dejar de descontarlo.')) {
+        db.collection('insumos').doc(b.dataset.delins).delete().then(() => toast('Insumo eliminado'));
+      }
+    }));
+  }
+
+  document.getElementById('nuevoInsumoBtn').addEventListener('click', () => abrirModalInsumo(null));
+
+  function abrirModalInsumo(id) {
+    editandoInsumoId = id;
+    const ins = id ? insumos.find(x => x.id === id) : null;
+    document.getElementById('modalInsumoTitulo').textContent = id ? 'Editar insumo' : 'Nuevo insumo';
+    document.getElementById('insNombre').value = ins ? ins.nombre : '';
+    document.getElementById('insUnidad').value = ins ? ins.unidad : 'kg';
+    document.getElementById('insStockActual').value = ins ? ins.stockActual : 0;
+    document.getElementById('insStockMinimo').value = ins ? ins.stockMinimo : 0;
+    document.getElementById('modalInsumo').classList.add('active');
+  }
+  document.getElementById('modalInsumoCancel').addEventListener('click', () => document.getElementById('modalInsumo').classList.remove('active'));
+  document.getElementById('modalInsumoConfirm').addEventListener('click', () => {
+    const data = {
+      nombre: document.getElementById('insNombre').value.trim(),
+      unidad: document.getElementById('insUnidad').value,
+      stockActual: parseFloat(document.getElementById('insStockActual').value) || 0,
+      stockMinimo: parseFloat(document.getElementById('insStockMinimo').value) || 0
+    };
+    if (!data.nombre) { toast('Falta el nombre del insumo'); return; }
+    const ref = editandoInsumoId ? db.collection('insumos').doc(editandoInsumoId) : db.collection('insumos').doc();
+    ref.set(data, { merge: true }).then(() => {
+      toast('Insumo guardado');
+      document.getElementById('modalInsumo').classList.remove('active');
+    });
+  });
+
+  // Descuenta del stock los insumos usados, según la receta de cada producto vendido
+  function descontarStockPorVenta(itemsVendidos) {
+    if (!window.firebase || insumos.length === 0) return;
+    const descuentos = {}; // insumoId -> cantidad total a restar
+    itemsVendidos.forEach(item => {
+      const prod = productos.find(p => p.id === item.productoId);
+      if (!prod || !prod.receta || prod.receta.length === 0) return;
+      prod.receta.forEach(r => {
+        descuentos[r.insumoId] = (descuentos[r.insumoId] || 0) + (r.cantidad * item.cantidad);
+      });
+    });
+    const ids = Object.keys(descuentos);
+    if (ids.length === 0) return;
+    const batch = db.batch();
+    ids.forEach(insumoId => {
+      const ref = db.collection('insumos').doc(insumoId);
+      batch.update(ref, { stockActual: firebase.firestore.FieldValue.increment(-descuentos[insumoId]) });
+    });
+    batch.commit().catch(() => {});
+  }
 
   /* ── REPORTES ── */
   function escucharVentasHoy() {
@@ -1068,6 +1353,8 @@
       const c = doc.exists ? doc.data() : {};
       document.getElementById('cfgNombre').value = c.nombre || '';
       document.getElementById('cfgHorario').value = c.horario || '';
+      document.getElementById('cfgPinCajero').value = c.pinCajero || '2468';
+      pinCajeroActual = c.pinCajero || '2468';
       featuresActuales = c.features || featuresActuales;
       renderPlusStatus();
     });
@@ -1077,6 +1364,14 @@
       nombre: document.getElementById('cfgNombre').value.trim(),
       horario: document.getElementById('cfgHorario').value.trim()
     }, { merge: true }).then(() => toast('Configuración guardada'));
+  });
+  document.getElementById('guardarPinCajeroBtn').addEventListener('click', () => {
+    const nuevoPin = document.getElementById('cfgPinCajero').value.trim();
+    if (!nuevoPin || nuevoPin.length < 4) { toast('El PIN debe tener al menos 4 dígitos'); return; }
+    db.collection('configuracion').doc('general').set({ pinCajero: nuevoPin }, { merge: true }).then(() => {
+      pinCajeroActual = nuevoPin;
+      toast('PIN de Punto de Venta actualizado');
+    });
   });
 
   document.getElementById('restablecerCatalogoBtn').addEventListener('click', () => {
@@ -1096,6 +1391,18 @@
     document.querySelectorAll('.plus-status').forEach(el => {
       el.textContent = featuresActuales[el.dataset.flag] ? '✅' : '🔒';
     });
+    aplicarTabsPlus();
+  }
+
+  function aplicarTabsPlus() {
+    const tabPedidos = document.querySelector('.tab-btn[data-view="pedidos"]');
+    const tabStock = document.querySelector('.tab-btn[data-view="stock"]');
+    const tabEmpleados = document.querySelector('.tab-btn[data-view="empleados"]');
+    // Pedidos y Empleados: solo Dueño, y solo si el flag está activo
+    tabPedidos.style.display = (featuresActuales.pedidosOnlineHabilitado && rolActual === 'dueño') ? '' : 'none';
+    tabEmpleados.style.display = (featuresActuales.empleadosHabilitado && rolActual === 'dueño') ? '' : 'none';
+    // Stock: visible para Dueño y para Punto de Venta (es operativo)
+    tabStock.style.display = featuresActuales.stockHabilitado ? '' : 'none';
   }
 
   /* ── ACCESO RAVENTECHS: 5 TAPS + PIN ── */
