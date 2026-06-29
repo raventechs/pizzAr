@@ -1,8 +1,14 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.9
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.0
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v1.9: agregado autocompletado (datalist
+  HTML) en el campo "Nombre" del modal de insumo — a medida que
+  se escribe, sugiere los insumos ya cargados en Stock, para
+  evitar duplicados por error de tipeo (ej. "Mozzarella" vs
+  "mozarella").
+  ──
   Cambios respecto a v1.8: 1) Grilla de Caja reestructurada en
   dos niveles: botones de Grupo arriba (Pizzas, Empanadas,
   Minutas, Bebidas, Extras, Postres — Bebidas une Gaseosas/
@@ -633,8 +639,8 @@
   <div class="modal-box">
     <h3 id="modalInsumoTitulo">Nuevo insumo</h3>
     <label>Nombre</label>
-    <input type="text" id="insNombre" placeholder="Harina, Mozzarella, Coca 1.5L...">
-    <label>Unidad</label>
+    <input type="text" id="insNombre" placeholder="Harina, Mozzarella, Coca 1.5L..." list="insumosDatalist">
+    <datalist id="insumosDatalist"></datalist>    <label>Unidad</label>
     <select id="insUnidad">
       <option value="kg">kg</option>
       <option value="g">g</option>
@@ -1275,6 +1281,8 @@
   }
 
   function renderInsumosLista() {
+    const datalist = document.getElementById('insumosDatalist');
+    if (datalist) datalist.innerHTML = insumos.map(i => `<option value="${i.nombre}"></option>`).join('');
     const cont = document.getElementById('insumosLista');
     if (!cont) return;
     if (insumos.length === 0) {
