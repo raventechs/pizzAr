@@ -1,8 +1,16 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.1
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.2
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v2.1: agregadas bebidas envasadas a la
+  lista de insumos básicos (Coca-Cola 500ml/1.5L/2.25L, Sprite,
+  Fanta, aguas, cervezas) — para estas, el insumo ES el producto
+  vendido (se compran y venden tal cual, sin receta de
+  fabricación). Sigue siendo manual asignar en cada producto de
+  bebida su insumo correspondiente con cantidad 1 en la receta,
+  para que el stock baje 1 a 1 al venderse.
+  ──
   Cambios respecto a v2.0: la precarga de insumos básicos ya no
   es automática (fallaba si la colección no estaba vacía en el
   momento exacto de cargar la página — si el usuario ya había
@@ -1282,7 +1290,18 @@
       ins('Carne para hamburguesa', 'kg', 6, 1.5),
       ins('Papa', 'kg', 20, 4),
       ins('Pan de miga', 'unidad', 2, 0.5),
-      ins('Roquefort', 'kg', 1.5, 0.3)
+      ins('Roquefort', 'kg', 1.5, 0.3),
+      // Bebidas envasadas — acá el insumo ES el producto (no hay receta, se vende tal cual)
+      ins('Coca-Cola 500ml', 'unidad', 24, 6),
+      ins('Coca-Cola 1.5L', 'unidad', 12, 3),
+      ins('Coca-Cola 2.25L', 'unidad', 6, 2),
+      ins('Sprite 500ml', 'unidad', 18, 4),
+      ins('Fanta 500ml', 'unidad', 18, 4),
+      ins('Agua sin gas 500ml', 'unidad', 24, 6),
+      ins('Agua con gas 500ml', 'unidad', 12, 3),
+      ins('Agua saborizada 500ml', 'unidad', 12, 3),
+      ins('Cerveza Quilmes lata', 'unidad', 24, 6),
+      ins('Cerveza Quilmes litro', 'unidad', 12, 3)
     ];
   }
 
