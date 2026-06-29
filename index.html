@@ -1,8 +1,18 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.2
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.3
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v2.2: agregado botón "🧹 Eliminar productos
+  duplicados" en Configuración — agrupa por nombre+categoría y,
+  si hay más de uno, conserva el que tenga la receta más
+  completa y borra el resto. Esto resuelve también casos donde
+  el stock no descontaba: la receta estaba asignada a una copia
+  duplicada distinta de la que se vendía desde Caja.
+  PENDIENTE: investigar el origen de los duplicados (posible
+  doble disparo de la precarga del catálogo en una sesión
+  anterior con reglas de Firestore todavía rotas).
+  ──
   Cambios respecto a v2.1: agregadas bebidas envasadas a la
   lista de insumos básicos (Coca-Cola 500ml/1.5L/2.25L, Sprite,
   Fanta, aguas, cervezas) — para estas, el insumo ES el producto
@@ -572,6 +582,12 @@
         <p style="font-size:0.78rem; color:var(--muted); margin-bottom:8px;">PIN para que tu empleado/cajero entre solo a Caja y Menú, sin ver Reportes, Historial ni esta Configuración.</p>
         <input type="text" id="cfgPinCajero" inputmode="numeric" maxlength="6" placeholder="Ej: 2468">
         <button class="btn-tomate" style="margin-top:10px;" id="guardarPinCajeroBtn">Guardar PIN</button>
+      </div>
+
+      <div class="config-section">
+        <h4>Limpiar duplicados</h4>
+        <p style="font-size:0.78rem; color:var(--muted); margin-bottom:10px;">Si quedaron productos repetidos (mismo nombre y categoría) por una carga doble, esto deja solo uno de cada uno — conserva el que tenga la receta más completa.</p>
+        <button class="btn-secondary" style="width:auto; padding:10px 18px;" id="limpiarDuplicadosBtn">🧹 Eliminar productos duplicados</button>
       </div>
 
       <div class="config-section">
@@ -1498,6 +1514,29 @@
       pinCajeroActual = nuevoPin;
       toast('PIN de Punto de Venta actualizado');
     });
+  });
+
+  document.getElementById('limpiarDuplicadosBtn').addEventListener('click', () => {
+    const grupos = {};
+    productos.forEach(p => {
+      const clave = (p.nombre || '').trim().toLowerCase() + '|' + (p.categoria || '').trim().toLowerCase();
+      if (!grupos[clave]) grupos[clave] = [];
+      grupos[clave].push(p);
+    });
+    const aBorrar = [];
+    let gruposConDuplicados = 0;
+    Object.values(grupos).forEach(lista => {
+      if (lista.length <= 1) return;
+      gruposConDuplicados++;
+      // Conservamos el que tenga más insumos en la receta; si hay empate, el primero
+      lista.sort((a, b) => (b.receta?.length || 0) - (a.receta?.length || 0));
+      lista.slice(1).forEach(p => aBorrar.push(p.id));
+    });
+    if (aBorrar.length === 0) { toast('No se encontraron productos duplicados'); return; }
+    if (!confirm(`Se van a eliminar ${aBorrar.length} productos duplicados (de ${gruposConDuplicados} grupos repetidos), conservando el que tenga la receta más completa. ¿Continuar?`)) return;
+    const batch = db.batch();
+    aBorrar.forEach(id => batch.delete(db.collection('productos').doc(id)));
+    batch.commit().then(() => toast(`${aBorrar.length} duplicados eliminados`));
   });
 
   document.getElementById('restablecerCatalogoBtn').addEventListener('click', () => {
