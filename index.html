@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<!--
+  ════════════════════════════════════════════════════════════
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.0
+  Fecha de esta versión: 2026-06-29
+  Primera versión: caja registradora (POS) para vender en el
+  local — alta de productos (pizzas/bebidas/extras), carrito de
+  venta con selector de tamaño, cobro y cierre de venta, reportes
+  del día y configuración del local. Login con Firebase Auth
+  (dueño/staff). Acceso admin RavenTechs oculto: 5 taps en el
+  logo + PIN 1990 abre el panel de Features Plus.
+  Estándar aplicado: pantalla de carga temática, PIN oculto
+  visible en todas las resoluciones, modo claro/oscuro, CRUD
+  completo, archivo único.
+  PLUS (features flags, hoy deshabilitados por defecto):
+  - pedidosOnlineHabilitado: pedidos desde el celular del cliente
+    con seguimiento de estado en tiempo real.
+  - stockHabilitado: control de stock de ingredientes.
+  - empleadosHabilitado: gestión de turnos/empleados.
+  PENDIENTE: construir la lógica real de cada plus cuando se
+  venda (hoy solo están como toggle + pantalla de aviso).
+  Botón "Eliminar usuario" en panel admin: pendiente, mismo
+  patrón que Rodix.
+  ════════════════════════════════════════════════════════════
+-->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PizzAR — Caja registradora</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #1A0F0A;
+    --bg2: #241510;
+    --bg3: #2E1B14;
+    --tomate: #E03C26;
+    --tomate-dim: #B82E1B;
+    --naranja: #F2994A;
+    --crema: #FFF8EE;
+    --muted: #C9A793;
+    --border: rgba(255,200,170,0.15);
+    --border-hover: rgba(224,60,38,0.5);
+    --green: #4CAF50;
+    --amber: #F2994A;
+    --gray: #8a8a8a;
+  }
+  body.light {
+    --bg: #FFF8EE;
+    --bg2: #FFFFFF;
+    --bg3: #FBEFE3;
+    --crema: #2A180F;
+    --muted: #8a6a55;
+    --border: rgba(120,70,40,0.15);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--crema);
+    font-family: 'Poppins', sans-serif;
+    min-height: 100vh;
+    transition: background 0.3s, color 0.3s;
+  }
+
+  /* ── PANTALLA DE CARGA ── */
+  #loadingScreen {
+    position: fixed; inset: 0; z-index: 9999;
+    background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1rem;
+    transition: opacity 0.4s;
+  }
+  .loading-pizza {
+    width: 90px; height: 90px;
+    animation: spin 1.6s linear infinite;
+  }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .loading-text { font-weight: 600; letter-spacing: 0.1em; color: var(--naranja); font-size: 0.9rem; text-transform: uppercase; }
+  #loadingScreen.hide { opacity: 0; pointer-events: none; }
+
+  /* ── LOGIN ── */
+  #loginScreen {
+    display: none;
+    min-height: 100vh;
+    align-items: center; justify-content: center;
+    padding: 1.5rem;
+  }
+  #loginScreen.active { display: flex; }
+  .login-box {
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: 16px;
+    padding: 2.5rem 2rem;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+  }
+  .login-logo { width: 64px; height: 64px; margin: 0 auto 1rem; }
+  .login-box h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 0.3rem; }
+  .login-box p.sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .login-box input {
+    width: 100%;
+    background: var(--bg3);
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    color: var(--crema);
+    padding: 12px 14px;
+    font-size: 0.95rem;
+    margin-bottom: 0.8rem;
+    font-family: inherit;
+  }
+  .login-box input:focus { outline: none; border-color: var(--border-hover); }
+  .btn-tomate {
+    width: 100%;
+    background: var(--tomate);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 13px;
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .btn-tomate:hover { background: var(--tomate-dim); }
+  .login-error { color: var(--tomate); font-size: 0.8rem; margin-top: 0.6rem; min-height: 1em; }
+
+  /* ── APP PRINCIPAL ── */
+  #app { display: none; min-height: 100vh; }
+  #app.active { display: flex; flex-direction: column; }
+
+  header.topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.8rem 1.2rem;
+    background: var(--bg2);
+    border-bottom: 0.5px solid var(--border);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 10px; }
+  #logoBtn { background: none; border: none; cursor: pointer; padding: 0; display: flex; align-items: center; }
+  .topbar-logo { width: 34px; height: 34px; }
+  .topbar-title { font-weight: 700; font-size: 1.05rem; }
+  .topbar-title span { color: var(--tomate); }
+  .topbar-right { display: flex; align-items: center; gap: 8px; }
+  .icon-btn {
+    background: var(--bg3);
+    border: 0.5px solid var(--border);
+    color: var(--crema);
+    width: 38px; height: 38px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    overflow-x: auto;
+    background: var(--bg2);
+    border-bottom: 0.5px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab-btn {
+    background: none; border: none; color: var(--muted);
+    padding: 0.85rem 1.1rem;
+    font-family: inherit; font-weight: 600; font-size: 0.85rem;
+    cursor: pointer; white-space: nowrap;
+    border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: var(--tomate); border-bottom-color: var(--tomate); }
+
+  main { flex: 1; padding: 1rem; max-width: 1100px; width: 100%; margin: 0 auto; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── CAJA / VENTA ── */
+  .caja-layout { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+  @media (min-width: 760px) { .caja-layout { grid-template-columns: 1.4fr 1fr; } }
+
+  .cat-filters { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 0.8rem; padding-bottom: 4px; }
+  .cat-chip {
+    background: var(--bg3); border: 0.5px solid var(--border); color: var(--muted);
+    padding: 6px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 600;
+    cursor: pointer; white-space: nowrap; font-family: inherit;
+  }
+  .cat-chip.active { background: var(--tomate); color: #fff; border-color: var(--tomate); }
+
+  .productos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 0.7rem; }
+  .producto-card {
+    background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px;
+    padding: 0.8rem; cursor: pointer; transition: border-color 0.2s;
+  }
+  .producto-card:hover { border-color: var(--border-hover); }
+  .producto-card.inactivo { opacity: 0.4; pointer-events: none; }
+  .producto-emoji { font-size: 1.8rem; margin-bottom: 4px; }
+  .producto-nombre { font-weight: 600; font-size: 0.88rem; margin-bottom: 2px; }
+  .producto-precio { color: var(--naranja); font-size: 0.78rem; font-weight: 600; }
+
+  .carrito-box {
+    background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px;
+    padding: 1rem; display: flex; flex-direction: column; max-height: 80vh;
+  }
+  .carrito-box h3 { font-size: 1rem; margin-bottom: 0.8rem; }
+  .carrito-items { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 0.8rem; }
+  .carrito-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; background: var(--bg3); border-radius: 8px; padding: 8px 10px; font-size: 0.82rem; }
+  .carrito-item-info { flex: 1; }
+  .carrito-item-qty { display: flex; align-items: center; gap: 4px; }
+  .qty-btn { background: var(--bg); border: 0.5px solid var(--border); color: var(--crema); width: 22px; height: 22px; border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
+  .carrito-total { display: flex; justify-content: space-between; font-weight: 700; font-size: 1.1rem; padding: 0.7rem 0; border-top: 0.5px solid var(--border); margin-bottom: 0.6rem; }
+  .pago-row { display: flex; gap: 6px; margin-bottom: 0.8rem; }
+  .pago-chip { flex: 1; background: var(--bg3); border: 0.5px solid var(--border); color: var(--muted); padding: 8px; border-radius: 8px; font-size: 0.78rem; font-weight: 600; cursor: pointer; text-align: center; font-family: inherit; }
+  .pago-chip.active { background: var(--naranja); color: #1A0F0A; border-color: var(--naranja); }
+  .empty-cart { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 2rem 0; }
+
+  /* ── MODAL ── */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200; align-items: center; justify-content: center; padding: 1rem; }
+  .modal-overlay.active { display: flex; }
+  .modal-box { background: var(--bg2); border-radius: 14px; padding: 1.5rem; max-width: 420px; width: 100%; max-height: 88vh; overflow-y: auto; }
+  .modal-box h3 { font-size: 1.1rem; margin-bottom: 1rem; }
+  .modal-box label { display: block; font-size: 0.78rem; color: var(--muted); margin: 0.6rem 0 0.25rem; font-weight: 600; }
+  .modal-box input, .modal-box select, .modal-box textarea {
+    width: 100%; background: var(--bg3); border: 0.5px solid var(--border); border-radius: 7px;
+    color: var(--crema); padding: 9px 11px; font-size: 0.88rem; font-family: inherit;
+  }
+  .size-price-row { display: flex; gap: 6px; align-items: center; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 1.2rem; }
+  .btn-secondary { flex: 1; background: var(--bg3); border: 0.5px solid var(--border); color: var(--muted); border-radius: 8px; padding: 11px; font-family: inherit; font-weight: 600; cursor: pointer; }
+  .btn-confirm { flex: 1; background: var(--tomate); border: none; color: #fff; border-radius: 8px; padding: 11px; font-family: inherit; font-weight: 600; cursor: pointer; }
+
+  /* ── MENÚ ADMIN (lista productos) ── */
+  .menu-toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.8rem; }
+  .producto-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px; padding: 0.7rem 0.9rem; margin-bottom: 0.5rem; }
+  .producto-row-name { font-weight: 600; font-size: 0.9rem; }
+  .producto-row-meta { font-size: 0.75rem; color: var(--muted); }
+  .row-actions { display: flex; gap: 6px; }
+  .row-actions button { background: var(--bg3); border: 0.5px solid var(--border); color: var(--crema); width: 32px; height: 32px; border-radius: 6px; cursor: pointer; }
+
+  /* ── REPORTES ── */
+  .reportes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 0.7rem; margin-bottom: 1.2rem; }
+  .reporte-card { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px; padding: 1rem; }
+  .reporte-num { font-size: 1.6rem; font-weight: 700; color: var(--naranja); }
+  .reporte-label { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .top-list { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px; padding: 1rem; }
+  .top-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 0.5px solid var(--border); font-size: 0.85rem; }
+  .top-row:last-child { border-bottom: none; }
+
+  /* ── CONFIGURACIÓN / PLUS ── */
+  .config-section { background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px; padding: 1.1rem; margin-bottom: 0.9rem; }
+  .config-section h4 { font-size: 0.95rem; margin-bottom: 0.7rem; }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+  .toggle-row-name { font-size: 0.85rem; font-weight: 600; }
+  .toggle-row-desc { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+  .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider-switch { position: absolute; cursor: pointer; inset: 0; background: var(--bg3); border: 0.5px solid var(--border); border-radius: 24px; transition: 0.2s; }
+  .slider-switch::before { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; bottom: 2px; background: var(--muted); border-radius: 50%; transition: 0.2s; }
+  input:checked + .slider-switch { background: var(--tomate); }
+  input:checked + .slider-switch::before { transform: translateX(20px); background: #fff; }
+
+  .plus-locked { text-align: center; padding: 2.5rem 1rem; color: var(--muted); }
+  .plus-locked .ti-lock { font-size: 2.2rem; display: block; margin-bottom: 0.6rem; }
+
+  /* ── TOAST ── */
+  #toastBox { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 500; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .toast { background: var(--bg2); border: 0.5px solid var(--border); border-left: 3px solid var(--tomate); color: var(--crema); padding: 10px 16px; border-radius: 8px; font-size: 0.85rem; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: toastIn 0.25s; }
+  @keyframes toastIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+
+  /* responsive touch */
+  button { touch-action: manipulation; }
+</style>
+</head>
+<body>
+
+<!-- PANTALLA DE CARGA -->
+<div id="loadingScreen">
+  <svg class="loading-pizza" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M50 5 L90 85 A45 45 0 0 1 10 85 Z" fill="#F2994A" stroke="#E03C26" stroke-width="3"/>
+    <circle cx="50" cy="40" r="5" fill="#E03C26"/>
+    <circle cx="35" cy="60" r="4" fill="#E03C26"/>
+    <circle cx="65" cy="60" r="4" fill="#E03C26"/>
+    <circle cx="50" cy="70" r="4" fill="#E03C26"/>
+  </svg>
+  <div class="loading-text">PizzAR</div>
+</div>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <svg class="login-logo" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M50 8 L88 82 A42 42 0 0 1 12 82 Z" fill="#F2994A" stroke="#E03C26" stroke-width="3"/>
+      <circle cx="50" cy="38" r="5" fill="#E03C26"/>
+      <circle cx="36" cy="56" r="4" fill="#E03C26"/>
+      <circle cx="64" cy="56" r="4" fill="#E03C26"/>
+    </svg>
+    <h1>PizzAR</h1>
+    <p class="sub">Iniciá sesión para abrir la caja</p>
+    <input type="email" id="loginEmail" placeholder="Email" autocomplete="username">
+    <input type="password" id="loginPass" placeholder="Contraseña" autocomplete="current-password">
+    <button class="btn-tomate" id="loginBtn">Ingresar</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="logoBtn" aria-label="PizzAR">
+        <svg class="topbar-logo" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M50 8 L88 82 A42 42 0 0 1 12 82 Z" fill="#F2994A" stroke="#E03C26" stroke-width="3"/>
+          <circle cx="50" cy="38" r="5" fill="#E03C26"/>
+          <circle cx="36" cy="56" r="4" fill="#E03C26"/>
+          <circle cx="64" cy="56" r="4" fill="#E03C26"/>
+        </svg>
+      </button>
+      <span class="topbar-title">Pizz<span>AR</span></span>
+    </div>
+    <div class="topbar-right">
+      <button class="icon-btn" id="darkToggleBtn" title="Modo claro/oscuro">🌙</button>
+      <button class="icon-btn" id="logoutBtn" title="Salir">⏻</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-view="caja">Caja</button>
+    <button class="tab-btn" data-view="menu">Menú</button>
+    <button class="tab-btn" data-view="reportes">Reportes</button>
+    <button class="tab-btn" data-view="configuracion">Configuración</button>
+  </nav>
+
+  <main>
+    <!-- VISTA CAJA -->
+    <section class="view active" id="view-caja">
+      <div class="caja-layout">
+        <div>
+          <div class="cat-filters" id="catFilters"></div>
+          <div class="productos-grid" id="productosGrid"></div>
+        </div>
+        <div class="carrito-box">
+          <h3>🧾 Venta actual</h3>
+          <div class="carrito-items" id="carritoItems">
+            <div class="empty-cart">Tocá un producto para agregarlo</div>
+          </div>
+          <div class="carrito-total"><span>Total</span><span id="carritoTotal">$0</span></div>
+          <div class="pago-row" id="pagoRow">
+            <button class="pago-chip active" data-pago="efectivo">Efectivo</button>
+            <button class="pago-chip" data-pago="transferencia">Transferencia</button>
+          </div>
+          <button class="btn-tomate" id="cobrarBtn">Cobrar y cerrar venta</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA MENÚ (ADMIN) -->
+    <section class="view" id="view-menu">
+      <div class="menu-toolbar">
+        <button class="btn-tomate" style="width:auto; padding:10px 18px;" id="nuevoProductoBtn">+ Nuevo producto</button>
+      </div>
+      <div id="productosLista"></div>
+    </section>
+
+    <!-- VISTA REPORTES -->
+    <section class="view" id="view-reportes">
+      <div class="reportes-grid">
+        <div class="reporte-card"><div class="reporte-num" id="repPedidosDia">0</div><div class="reporte-label">Ventas hoy</div></div>
+        <div class="reporte-card"><div class="reporte-num" id="repIngresosDia">$0</div><div class="reporte-label">Ingresos hoy</div></div>
+      </div>
+      <div class="top-list">
+        <h4 style="margin-bottom:0.6rem; font-size:0.9rem;">Productos más vendidos hoy</h4>
+        <div id="topProductos"></div>
+      </div>
+      <div class="top-list" style="margin-top:0.8rem;">
+        <h4 style="margin-bottom:0.6rem; font-size:0.9rem;">Por método de pago</h4>
+        <div id="porPago"></div>
+      </div>
+    </section>
+
+    <!-- VISTA CONFIGURACIÓN -->
+    <section class="view" id="view-configuracion">
+      <div class="config-section">
+        <h4>Datos del local</h4>
+        <label style="font-size:0.78rem; color:var(--muted); display:block; margin-bottom:4px;">Nombre de la pizzería</label>
+        <input type="text" id="cfgNombre" placeholder="Mi Pizzería">
+        <label style="font-size:0.78rem; color:var(--muted); display:block; margin:10px 0 4px;">Horario de atención</label>
+        <input type="text" id="cfgHorario" placeholder="Lun a Dom 19:00 - 00:00">
+        <button class="btn-tomate" style="margin-top:12px;" id="guardarCfgBtn">Guardar</button>
+      </div>
+
+      <div class="config-section">
+        <h4>Módulos plus</h4>
+        <div class="toggle-row">
+          <div><div class="toggle-row-name">Pedidos online</div><div class="toggle-row-desc">El cliente pide desde su celular y sigue el estado del pedido</div></div>
+          <div class="plus-status" data-flag="pedidosOnlineHabilitado">🔒</div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-row-name">Control de stock</div><div class="toggle-row-desc">Seguimiento de ingredientes y alertas de faltante</div></div>
+          <div class="plus-status" data-flag="stockHabilitado">🔒</div>
+        </div>
+        <div class="toggle-row">
+          <div><div class="toggle-row-name">Gestión de empleados</div><div class="toggle-row-desc">Turnos, accesos y permisos por empleado</div></div>
+          <div class="plus-status" data-flag="empleadosHabilitado">🔒</div>
+        </div>
+        <p style="font-size:0.75rem; color:var(--muted); margin-top:10px;">Estos módulos se activan por RavenTechs una vez contratados.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- MODAL: agregar al carrito (tamaño + cantidad) -->
+<div class="modal-overlay" id="modalAgregar">
+  <div class="modal-box">
+    <h3 id="modalAgregarNombre">Producto</h3>
+    <label>Tamaño</label>
+    <select id="modalAgregarTamano"></select>
+    <label>Cantidad</label>
+    <input type="number" id="modalAgregarCantidad" value="1" min="1">
+    <div class="modal-actions">
+      <button class="btn-secondary" id="modalAgregarCancel">Cancelar</button>
+      <button class="btn-confirm" id="modalAgregarConfirm">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: producto (alta/edición, admin) -->
+<div class="modal-overlay" id="modalProducto">
+  <div class="modal-box">
+    <h3 id="modalProductoTitulo">Nuevo producto</h3>
+    <label>Nombre</label>
+    <input type="text" id="prodNombre">
+    <label>Categoría</label>
+    <select id="prodCategoria">
+      <option value="Clásicas">Clásicas</option>
+      <option value="Especiales">Especiales</option>
+      <option value="Veganas">Veganas</option>
+      <option value="Bebidas">Bebidas</option>
+      <option value="Extras">Extras</option>
+    </select>
+    <label>Emoji / ícono</label>
+    <input type="text" id="prodEmoji" placeholder="🍕" maxlength="2">
+    <label>Precios por tamaño ($)</label>
+    <div class="size-price-row"><span style="width:70px; font-size:0.8rem;">Chica</span><input type="number" id="prodPrecioP"></div>
+    <div class="size-price-row" style="margin-top:5px;"><span style="width:70px; font-size:0.8rem;">Mediana</span><input type="number" id="prodPrecioM"></div>
+    <div class="size-price-row" style="margin-top:5px;"><span style="width:70px; font-size:0.8rem;">Grande</span><input type="number" id="prodPrecioG"></div>
+    <label style="margin-top:10px;">
+      <input type="checkbox" id="prodActivo" checked style="width:auto; margin-right:6px;">Producto activo
+    </label>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="modalProductoCancel">Cancelar</button>
+      <button class="btn-confirm" id="modalProductoConfirm">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: PIN ADMIN RAVENTECHS (5 taps en el logo) -->
+<div class="modal-overlay" id="modalPin">
+  <div class="modal-box" style="text-align:center; max-width:300px;">
+    <h3>🔒 Acceso RavenTechs</h3>
+    <input type="password" id="pinInput" inputmode="numeric" maxlength="4" placeholder="••••" style="text-align:center; letter-spacing:0.4em; font-size:1.3rem; margin-top:10px;">
+    <div class="login-error" id="pinError"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="pinCancelBtn">Cancelar</button>
+      <button class="btn-confirm" id="pinConfirmBtn">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: PANEL FEATURES PLUS (tras PIN correcto) -->
+<div class="modal-overlay" id="modalFeatures">
+  <div class="modal-box">
+    <h3>⚙️ Features Plus (RavenTechs)</h3>
+    <div class="toggle-row">
+      <div class="toggle-row-name">Pedidos online</div>
+      <label class="switch"><input type="checkbox" id="flagPedidos"><span class="slider-switch"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-row-name">Control de stock</div>
+      <label class="switch"><input type="checkbox" id="flagStock"><span class="slider-switch"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-row-name">Gestión de empleados</div>
+      <label class="switch"><input type="checkbox" id="flagEmpleados"><span class="slider-switch"></span></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="modalFeaturesCancel">Cerrar</button>
+      <button class="btn-confirm" id="modalFeaturesGuardar">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toastBox"></div>
+
+<script>
+  /* ════════ FIREBASE CONFIG — REEMPLAZAR CON LOS DATOS REALES DEL PROYECTO ════════ */
+  const firebaseConfig = {
+    apiKey: "TU_API_KEY",
+    authDomain: "pizzar-XXXX.firebaseapp.com",
+    projectId: "pizzar-XXXX",
+    storageBucket: "pizzar-XXXX.appspot.com",
+    messagingSenderId: "XXXXXXXXXX",
+    appId: "XXXXXXXXXXXXXXXXXXXXX"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+
+  const ADMIN_EMAIL = 'rgaraventa@gmail.com';
+  const PIN_RAVENTECHS = '1990';
+
+  let productos = [];
+  let carrito = [];
+  let metodoPago = 'efectivo';
+  let categoriaActiva = 'Todas';
+  let productoSeleccionado = null;
+  let editandoProductoId = null;
+  let featuresActuales = { pedidosOnlineHabilitado: false, stockHabilitado: false, empleadosHabilitado: false };
+
+  function toast(msg) {
+    const box = document.getElementById('toastBox');
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    box.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  /* ── AUTH ── */
+  auth.onAuthStateChanged(user => {
+    document.getElementById('loadingScreen').classList.add('hide');
+    if (user) {
+      document.getElementById('loginScreen').classList.remove('active');
+      document.getElementById('app').classList.add('active');
+      cargarProductos();
+      cargarConfiguracion();
+      escucharVentasHoy();
+    } else {
+      document.getElementById('app').classList.remove('active');
+      document.getElementById('loginScreen').classList.add('active');
+    }
+  });
+
+  document.getElementById('loginBtn').addEventListener('click', () => {
+    const email = document.getElementById('loginEmail').value.trim();
+    const pass = document.getElementById('loginPass').value;
+    auth.signInWithEmailAndPassword(email, pass).catch(err => {
+      document.getElementById('loginError').textContent = 'Email o contraseña incorrectos';
+    });
+  });
+  document.getElementById('logoutBtn').addEventListener('click', () => auth.signOut());
+
+  /* ── DARK / LIGHT ── */
+  document.getElementById('darkToggleBtn').addEventListener('click', () => {
+    document.body.classList.toggle('light');
+    document.getElementById('darkToggleBtn').textContent = document.body.classList.contains('light') ? '☀️' : '🌙';
+  });
+
+  /* ── TABS ── */
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('view-' + btn.dataset.view).classList.add('active');
+      if (btn.dataset.view === 'menu') renderProductosLista();
+      if (btn.dataset.view === 'reportes') escucharVentasHoy();
+    });
+  });
+
+  /* ── PRODUCTOS ── */
+  function cargarProductos() {
+    db.collection('productos').onSnapshot(snap => {
+      productos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (productos.length === 0) precargarMenuEjemplo();
+      renderCatFilters();
+      renderProductosGrid();
+      renderProductosLista();
+    });
+  }
+
+  function precargarMenuEjemplo() {
+    const ejemplo = [
+      { nombre: 'Muzzarella', categoria: 'Clásicas', emoji: '🍕', precios: { chica: 4500, mediana: 6500, grande: 8500 }, activo: true },
+      { nombre: 'Napolitana', categoria: 'Clásicas', emoji: '🍕', precios: { chica: 5000, mediana: 7000, grande: 9000 }, activo: true },
+      { nombre: 'Especial RavenTechs', categoria: 'Especiales', emoji: '🍕', precios: { chica: 5800, mediana: 7800, grande: 9800 }, activo: true },
+      { nombre: 'Vegana de verdura', categoria: 'Veganas', emoji: '🥦', precios: { chica: 5200, mediana: 7200, grande: 9200 }, activo: true },
+      { nombre: 'Coca-Cola 500ml', categoria: 'Bebidas', emoji: '🥤', precios: { chica: 1500 }, activo: true },
+      { nombre: 'Papas fritas', categoria: 'Extras', emoji: '🍟', precios: { chica: 2500 }, activo: true }
+    ];
+    ejemplo.forEach(p => db.collection('productos').add(p));
+  }
+
+  function renderCatFilters() {
+    const cats = ['Todas', ...new Set(productos.map(p => p.categoria))];
+    document.getElementById('catFilters').innerHTML = cats.map(c =>
+      `<button class="cat-chip ${c === categoriaActiva ? 'active' : ''}" data-cat="${c}">${c}</button>`
+    ).join('');
+    document.querySelectorAll('.cat-chip').forEach(chip => {
+      chip.addEventListener('click', () => { categoriaActiva = chip.dataset.cat; renderCatFilters(); renderProductosGrid(); });
+    });
+  }
+
+  function renderProductosGrid() {
+    const lista = categoriaActiva === 'Todas' ? productos : productos.filter(p => p.categoria === categoriaActiva);
+    document.getElementById('productosGrid').innerHTML = lista.map(p => `
+      <div class="producto-card ${p.activo ? '' : 'inactivo'}" data-id="${p.id}">
+        <div class="producto-emoji">${p.emoji || '🍕'}</div>
+        <div class="producto-nombre">${p.nombre}</div>
+        <div class="producto-precio">desde $${menorPrecio(p)}</div>
+      </div>
+    `).join('');
+    document.querySelectorAll('.producto-card').forEach(card => {
+      card.addEventListener('click', () => abrirModalAgregar(card.dataset.id));
+    });
+  }
+
+  function menorPrecio(p) {
+    const valores = Object.values(p.precios || {}).filter(v => v > 0);
+    return valores.length ? Math.min(...valores) : 0;
+  }
+
+  /* ── MODAL AGREGAR AL CARRITO ── */
+  function abrirModalAgregar(id) {
+    productoSeleccionado = productos.find(p => p.id === id);
+    if (!productoSeleccionado) return;
+    document.getElementById('modalAgregarNombre').textContent = productoSeleccionado.nombre;
+    const tamanoSelect = document.getElementById('modalAgregarTamano');
+    const tamanos = Object.entries(productoSeleccionado.precios || {}).filter(([,v]) => v > 0);
+    tamanoSelect.innerHTML = tamanos.map(([t,v]) => `<option value="${t}">${t} — $${v}</option>`).join('');
+    document.getElementById('modalAgregarCantidad').value = 1;
+    document.getElementById('modalAgregar').classList.add('active');
+  }
+  document.getElementById('modalAgregarCancel').addEventListener('click', () => document.getElementById('modalAgregar').classList.remove('active'));
+  document.getElementById('modalAgregarConfirm').addEventListener('click', () => {
+    const tamano = document.getElementById('modalAgregarTamano').value;
+    const cantidad = parseInt(document.getElementById('modalAgregarCantidad').value) || 1;
+    const precio = productoSeleccionado.precios[tamano];
+    carrito.push({ productoId: productoSeleccionado.id, nombre: productoSeleccionado.nombre, tamano, precio, cantidad });
+    renderCarrito();
+    document.getElementById('modalAgregar').classList.remove('active');
+  });
+
+  /* ── CARRITO ── */
+  function renderCarrito() {
+    const cont = document.getElementById('carritoItems');
+    if (carrito.length === 0) {
+      cont.innerHTML = '<div class="empty-cart">Tocá un producto para agregarlo</div>';
+    } else {
+      cont.innerHTML = carrito.map((item, i) => `
+        <div class="carrito-item">
+          <div class="carrito-item-info">${item.nombre} <span style="color:var(--muted)">(${item.tamano})</span></div>
+          <div class="carrito-item-qty">
+            <button class="qty-btn" data-i="${i}" data-d="-1">−</button>
+            <span>${item.cantidad}</span>
+            <button class="qty-btn" data-i="${i}" data-d="1">+</button>
+          </div>
+          <div>$${item.precio * item.cantidad}</div>
+        </div>
+      `).join('');
+      document.querySelectorAll('.qty-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          const i = parseInt(b.dataset.i);
+          carrito[i].cantidad += parseInt(b.dataset.d);
+          if (carrito[i].cantidad <= 0) carrito.splice(i, 1);
+          renderCarrito();
+        });
+      });
+    }
+    const total = carrito.reduce((s, it) => s + it.precio * it.cantidad, 0);
+    document.getElementById('carritoTotal').textContent = '$' + total;
+  }
+
+  document.querySelectorAll('.pago-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.pago-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      metodoPago = chip.dataset.pago;
+    });
+  });
+
+  document.getElementById('cobrarBtn').addEventListener('click', () => {
+    if (carrito.length === 0) { toast('El carrito está vacío'); return; }
+    const total = carrito.reduce((s, it) => s + it.precio * it.cantidad, 0);
+    db.collection('ventas').add({
+      items: carrito,
+      total,
+      metodoPago,
+      fecha: firebase.firestore.FieldValue.serverTimestamp(),
+      fechaDia: new Date().toISOString().slice(0,10)
+    }).then(() => {
+      toast('Venta registrada — $' + total);
+      carrito = [];
+      renderCarrito();
+    });
+  });
+
+  /* ── MENÚ ADMIN (CRUD productos) ── */
+  function renderProductosLista() {
+    document.getElementById('productosLista').innerHTML = productos.map(p => `
+      <div class="producto-row">
+        <div>
+          <div class="producto-row-name">${p.emoji || '🍕'} ${p.nombre}</div>
+          <div class="producto-row-meta">${p.categoria} — ${p.activo ? 'Activo' : 'Inactivo'}</div>
+        </div>
+        <div class="row-actions">
+          <button data-edit="${p.id}">✏️</button>
+          <button data-del="${p.id}">🗑️</button>
+        </div>
+      </div>
+    `).join('');
+    document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => abrirModalProducto(b.dataset.edit)));
+    document.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
+      if (confirm('¿Eliminar este producto?')) db.collection('productos').doc(b.dataset.del).delete().then(() => toast('Producto eliminado'));
+    }));
+  }
+
+  document.getElementById('nuevoProductoBtn').addEventListener('click', () => abrirModalProducto(null));
+
+  function abrirModalProducto(id) {
+    editandoProductoId = id;
+    const p = id ? productos.find(x => x.id === id) : null;
+    document.getElementById('modalProductoTitulo').textContent = id ? 'Editar producto' : 'Nuevo producto';
+    document.getElementById('prodNombre').value = p ? p.nombre : '';
+    document.getElementById('prodCategoria').value = p ? p.categoria : 'Clásicas';
+    document.getElementById('prodEmoji').value = p ? (p.emoji || '🍕') : '🍕';
+    document.getElementById('prodPrecioP').value = p?.precios?.chica || '';
+    document.getElementById('prodPrecioM').value = p?.precios?.mediana || '';
+    document.getElementById('prodPrecioG').value = p?.precios?.grande || '';
+    document.getElementById('prodActivo').checked = p ? p.activo : true;
+    document.getElementById('modalProducto').classList.add('active');
+  }
+  document.getElementById('modalProductoCancel').addEventListener('click', () => document.getElementById('modalProducto').classList.remove('active'));
+  document.getElementById('modalProductoConfirm').addEventListener('click', () => {
+    const data = {
+      nombre: document.getElementById('prodNombre').value.trim(),
+      categoria: document.getElementById('prodCategoria').value,
+      emoji: document.getElementById('prodEmoji').value.trim(),
+      precios: {
+        chica: parseFloat(document.getElementById('prodPrecioP').value) || 0,
+        mediana: parseFloat(document.getElementById('prodPrecioM').value) || 0,
+        grande: parseFloat(document.getElementById('prodPrecioG').value) || 0
+      },
+      activo: document.getElementById('prodActivo').checked
+    };
+    if (!data.nombre) { toast('Falta el nombre del producto'); return; }
+    const ref = editandoProductoId ? db.collection('productos').doc(editandoProductoId) : db.collection('productos').doc();
+    ref.set(data, { merge: true }).then(() => {
+      toast('Producto guardado');
+      document.getElementById('modalProducto').classList.remove('active');
+    });
+  });
+
+  /* ── REPORTES ── */
+  function escucharVentasHoy() {
+    const hoy = new Date().toISOString().slice(0,10);
+    db.collection('ventas').where('fechaDia', '==', hoy).onSnapshot(snap => {
+      const ventas = snap.docs.map(d => d.data());
+      document.getElementById('repPedidosDia').textContent = ventas.length;
+      const ingresos = ventas.reduce((s, v) => s + (v.total || 0), 0);
+      document.getElementById('repIngresosDia').textContent = '$' + ingresos;
+
+      const conteoProductos = {};
+      const conteoPago = {};
+      ventas.forEach(v => {
+        (v.items || []).forEach(it => {
+          conteoProductos[it.nombre] = (conteoProductos[it.nombre] || 0) + it.cantidad;
+        });
+        conteoPago[v.metodoPago] = (conteoPago[v.metodoPago] || 0) + 1;
+      });
+      const topArr = Object.entries(conteoProductos).sort((a,b) => b[1]-a[1]).slice(0,5);
+      document.getElementById('topProductos').innerHTML = topArr.length
+        ? topArr.map(([n,c]) => `<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join('')
+        : '<div class="top-row"><span>Sin ventas hoy</span></div>';
+      document.getElementById('porPago').innerHTML = Object.entries(conteoPago).length
+        ? Object.entries(conteoPago).map(([n,c]) => `<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join('')
+        : '<div class="top-row"><span>Sin ventas hoy</span></div>';
+    });
+  }
+
+  /* ── CONFIGURACIÓN ── */
+  function cargarConfiguracion() {
+    db.collection('configuracion').doc('general').get().then(doc => {
+      const c = doc.exists ? doc.data() : {};
+      document.getElementById('cfgNombre').value = c.nombre || '';
+      document.getElementById('cfgHorario').value = c.horario || '';
+      featuresActuales = c.features || featuresActuales;
+      renderPlusStatus();
+    });
+  }
+  document.getElementById('guardarCfgBtn').addEventListener('click', () => {
+    db.collection('configuracion').doc('general').set({
+      nombre: document.getElementById('cfgNombre').value.trim(),
+      horario: document.getElementById('cfgHorario').value.trim()
+    }, { merge: true }).then(() => toast('Configuración guardada'));
+  });
+
+  function renderPlusStatus() {
+    document.querySelectorAll('.plus-status').forEach(el => {
+      el.textContent = featuresActuales[el.dataset.flag] ? '✅' : '🔒';
+    });
+  }
+
+  /* ── ACCESO RAVENTECHS: 5 TAPS + PIN ── */
+  let tapCount = 0; let tapTimer = null;
+  document.getElementById('logoBtn').addEventListener('click', () => {
+    tapCount++;
+    clearTimeout(tapTimer);
+    if (tapCount >= 5) { tapCount = 0; abrirModalPin(); return; }
+    tapTimer = setTimeout(() => tapCount = 0, 1500);
+  });
+  function abrirModalPin() {
+    document.getElementById('pinInput').value = '';
+    document.getElementById('pinError').textContent = '';
+    document.getElementById('modalPin').classList.add('active');
+  }
+  document.getElementById('pinCancelBtn').addEventListener('click', () => document.getElementById('modalPin').classList.remove('active'));
+  document.getElementById('pinConfirmBtn').addEventListener('click', () => {
+    if (document.getElementById('pinInput').value === PIN_RAVENTECHS) {
+      document.getElementById('modalPin').classList.remove('active');
+      document.getElementById('flagPedidos').checked = !!featuresActuales.pedidosOnlineHabilitado;
+      document.getElementById('flagStock').checked = !!featuresActuales.stockHabilitado;
+      document.getElementById('flagEmpleados').checked = !!featuresActuales.empleadosHabilitado;
+      document.getElementById('modalFeatures').classList.add('active');
+    } else {
+      document.getElementById('pinError').textContent = 'PIN incorrecto';
+    }
+  });
+  document.getElementById('modalFeaturesCancel').addEventListener('click', () => document.getElementById('modalFeatures').classList.remove('active'));
+  document.getElementById('modalFeaturesGuardar').addEventListener('click', () => {
+    const nuevas = {
+      pedidosOnlineHabilitado: document.getElementById('flagPedidos').checked,
+      stockHabilitado: document.getElementById('flagStock').checked,
+      empleadosHabilitado: document.getElementById('flagEmpleados').checked
+    };
+    db.collection('configuracion').doc('general').set({ features: nuevas }, { merge: true }).then(() => {
+      featuresActuales = nuevas;
+      renderPlusStatus();
+      toast('Features actualizadas');
+      document.getElementById('modalFeatures').classList.remove('active');
+    });
+  });
+</script>
+</body>
+</html>
