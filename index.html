@@ -1,8 +1,20 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.8
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.9
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v1.8: 1) Grilla de Caja reestructurada en
+  dos niveles: botones de Grupo arriba (Pizzas, Empanadas,
+  Minutas, Bebidas, Extras, Postres — Bebidas une Gaseosas/
+  Cervezas/Aguas) y, dentro de cada grupo, las variedades como
+  botones chicos tipo POS (antes eran tarjetas grandes). Si el
+  grupo tiene más de una categoría real adentro (caso Bebidas),
+  aparece un sub-filtro de variedad. 2) Stock: se precargan 20
+  insumos básicos (harina, mozzarella, carne, etc.) la primera
+  vez que se abre la pestaña con la colección vacía, SIN receta
+  asignada — las recetas se cargan a mano desde el modal de
+  cada producto.
+  ──
   Cambios respecto a v1.7: construido el módulo real de Stock
   (antes era placeholder). Nueva colección "insumos" (nombre,
   unidad, stockActual, stockMinimo) con CRUD y alerta visual de
@@ -251,16 +263,27 @@
   }
   .cat-chip.active { background: var(--tomate); color: #fff; border-color: var(--tomate); }
 
-  .productos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 0.7rem; }
-  .producto-card {
-    background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px;
-    padding: 0.8rem; cursor: pointer; transition: border-color 0.2s;
+  .grupo-filters { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 0.9rem; padding-bottom: 4px; }
+  .grupo-chip {
+    background: var(--bg2); border: 1px solid var(--border); color: var(--crema);
+    padding: 10px 18px; border-radius: 10px; font-size: 0.85rem; font-weight: 700;
+    cursor: pointer; white-space: nowrap; font-family: inherit;
   }
-  .producto-card:hover { border-color: var(--border-hover); }
-  .producto-card.inactivo { opacity: 0.4; pointer-events: none; }
-  .producto-emoji { font-size: 1.8rem; margin-bottom: 4px; }
-  .producto-nombre { font-weight: 600; font-size: 0.88rem; margin-bottom: 2px; }
-  .producto-precio { color: var(--naranja); font-size: 0.78rem; font-weight: 600; }
+  .grupo-chip.active { background: var(--tomate); color: #fff; border-color: var(--tomate); }
+
+  .productos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px,1fr)); gap: 0.5rem; }
+  .producto-btn {
+    background: var(--bg2); border: 0.5px solid var(--border); border-radius: 8px;
+    padding: 0.5rem 0.4rem; cursor: pointer; transition: border-color 0.2s;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    min-height: 78px; justify-content: center;
+  }
+  .producto-btn:hover { border-color: var(--border-hover); }
+  .producto-btn:active { transform: scale(0.96); }
+  .producto-btn.inactivo { opacity: 0.4; pointer-events: none; }
+  .producto-btn .producto-emoji { font-size: 1.5rem; margin-bottom: 2px; }
+  .producto-btn .producto-nombre { font-weight: 600; font-size: 0.74rem; line-height: 1.15; }
+  .producto-btn .producto-precio { color: var(--naranja); font-size: 0.7rem; font-weight: 600; margin-top: 2px; }
 
   .carrito-box {
     background: var(--bg2); border: 0.5px solid var(--border); border-radius: 10px;
@@ -418,6 +441,7 @@
     <section class="view active" id="view-caja">
       <div class="caja-layout">
         <div>
+          <div class="grupo-filters" id="grupoFilters"></div>
           <div class="cat-filters" id="catFilters"></div>
           <div class="productos-grid" id="productosGrid"></div>
         </div>
@@ -947,26 +971,59 @@
     ejemplo.forEach(p => db.collection('productos').add(p));
   }
 
+  // Mapeo: categoría real del producto → grupo visible en Caja
+  const GRUPOS_MAP = {
+    'Pizzas': 'Pizzas',
+    'Empanadas': 'Empanadas',
+    'Minutas': 'Minutas',
+    'Gaseosas': 'Bebidas',
+    'Cervezas': 'Bebidas',
+    'Aguas': 'Bebidas',
+    'Extras': 'Extras',
+    'Postres': 'Postres'
+  };
+  function grupoDe(categoria) { return GRUPOS_MAP[categoria] || categoria; }
+
+  let grupoActivo = null;
+
   function renderCatFilters() {
-    const cats = ['Todas', ...new Set(productos.map(p => p.categoria))];
-    document.getElementById('catFilters').innerHTML = cats.map(c =>
-      `<button class="cat-chip ${c === categoriaActiva ? 'active' : ''}" data-cat="${c}">${c}</button>`
+    const grupos = [...new Set(productos.map(p => grupoDe(p.categoria)))];
+    if (!grupoActivo || !grupos.includes(grupoActivo)) grupoActivo = grupos[0] || null;
+
+    document.getElementById('grupoFilters').innerHTML = grupos.map(g =>
+      `<button class="grupo-chip ${g === grupoActivo ? 'active' : ''}" data-grupo="${g}">${g}</button>`
     ).join('');
-    document.querySelectorAll('.cat-chip').forEach(chip => {
-      chip.addEventListener('click', () => { categoriaActiva = chip.dataset.cat; renderCatFilters(); renderProductosGrid(); });
+    document.querySelectorAll('.grupo-chip').forEach(chip => {
+      chip.addEventListener('click', () => { grupoActivo = chip.dataset.grupo; categoriaActiva = 'Todas'; renderCatFilters(); renderProductosGrid(); });
     });
+
+    // Sub-filtro de variedad: solo si el grupo tiene más de una categoría real adentro (ej. Bebidas)
+    const categoriasDelGrupo = [...new Set(productos.filter(p => grupoDe(p.categoria) === grupoActivo).map(p => p.categoria))];
+    const catCont = document.getElementById('catFilters');
+    if (categoriasDelGrupo.length <= 1) {
+      catCont.innerHTML = '';
+    } else {
+      const cats = ['Todas', ...categoriasDelGrupo];
+      catCont.innerHTML = cats.map(c =>
+        `<button class="cat-chip ${c === categoriaActiva ? 'active' : ''}" data-cat="${c}">${c}</button>`
+      ).join('');
+      document.querySelectorAll('.cat-chip').forEach(chip => {
+        chip.addEventListener('click', () => { categoriaActiva = chip.dataset.cat; renderCatFilters(); renderProductosGrid(); });
+      });
+    }
   }
 
   function renderProductosGrid() {
-    const lista = categoriaActiva === 'Todas' ? productos : productos.filter(p => p.categoria === categoriaActiva);
+    let lista = productos.filter(p => grupoDe(p.categoria) === grupoActivo);
+    if (categoriaActiva !== 'Todas') lista = lista.filter(p => p.categoria === categoriaActiva);
     document.getElementById('productosGrid').innerHTML = lista.map(p => `
-      <div class="producto-card ${p.activo ? '' : 'inactivo'}" data-id="${p.id}">
+      <div class="producto-btn ${p.activo ? '' : 'inactivo'}" data-id="${p.id}">
         <div class="producto-emoji">${p.emoji || '🍕'}</div>
         <div class="producto-nombre">${p.nombre}</div>
-        <div class="producto-precio">desde $${menorPrecio(p)}</div>
+        <div class="producto-precio">$${menorPrecio(p)}</div>
       </div>
     `).join('');
-    document.querySelectorAll('.producto-card').forEach(card => {
+    document.querySelectorAll('.producto-btn').forEach(card => {
       card.addEventListener('click', () => abrirModalAgregar(card.dataset.id));
     });
   }
@@ -1185,8 +1242,36 @@
   function cargarInsumos() {
     db.collection('insumos').onSnapshot(snap => {
       insumos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (insumos.length === 0) precargarInsumosBasicos();
       renderInsumosLista();
     });
+  }
+
+  function precargarInsumosBasicos() {
+    const ins = (nombre, unidad, stockActual, stockMinimo) => ({ nombre, unidad, stockActual, stockMinimo });
+    const basicos = [
+      ins('Harina', 'kg', 25, 5),
+      ins('Mozzarella', 'kg', 15, 3),
+      ins('Salsa de tomate', 'kg', 10, 2),
+      ins('Aceite', 'L', 8, 2),
+      ins('Levadura', 'kg', 1, 0.2),
+      ins('Sal', 'kg', 5, 1),
+      ins('Jamón', 'kg', 5, 1),
+      ins('Morrones', 'kg', 3, 0.5),
+      ins('Aceitunas', 'kg', 2, 0.5),
+      ins('Huevo', 'unidad', 60, 12),
+      ins('Carne picada', 'kg', 10, 2),
+      ins('Pollo', 'kg', 8, 2),
+      ins('Cebolla', 'kg', 5, 1),
+      ins('Verdura (acelga/espinaca)', 'kg', 3, 0.5),
+      ins('Queso de máquina', 'kg', 4, 1),
+      ins('Pan para hamburguesa', 'unidad', 30, 6),
+      ins('Carne para hamburguesa', 'kg', 6, 1.5),
+      ins('Papa', 'kg', 20, 4),
+      ins('Pan de miga', 'unidad', 2, 0.5),
+      ins('Roquefort', 'kg', 1.5, 0.3)
+    ];
+    basicos.forEach(i => db.collection('insumos').add(i));
   }
 
   function renderInsumosLista() {
