@@ -1,8 +1,26 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.3
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.4
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v2.3: REDISEÑO IMPORTANTE — la receta ya no
+  es una sola lista por producto, ahora es por TAMAÑO/VARIANTE
+  (campo nuevo: producto.recetaPorTamano = { [nombreTamaño]:
+  [{insumoId, cantidad}] } ). Esto resuelve el caso real: vender
+  "Coca-Cola 2.25L" ahora descuenta el insumo "Coca-Cola 2.25L",
+  no el de 500ml (antes la receta era una sola para todo el
+  producto sin importar el tamaño vendido). El modal de producto
+  ahora muestra, debajo de cada tamaño, su propia mini-lista de
+  insumos. Se mantiene compatibilidad hacia atrás: si un producto
+  quedó con el campo viejo "receta" (sin tamaño), se sigue usando
+  como fallback hasta que se edite y resguarde con el nuevo
+  esquema. El botón "Eliminar productos duplicados" también
+  actualizado para evaluar el nuevo esquema al decidir qué copia
+  conservar.
+  PENDIENTE: revisar productos que ya tenían receta vieja
+  asignada (ej. Coca-Cola) y re-asignarla correctamente por
+  tamaño desde el modal de Menú.
+  ──
   Cambios respecto a v2.2: agregado botón "🧹 Eliminar productos
   duplicados" en Configuración — agrupa por nombre+categoría y,
   si hay más de uno, conserva el que tenga la receta más
@@ -346,6 +364,11 @@
   .size-price-row input[type="text"] { flex: 1.1; }
   .size-price-row input[type="number"] { flex: 1; }
   .size-price-row .del-tamano { flex-shrink: 0; background: var(--bg3); border: 0.5px solid var(--border); color: var(--tomate); width: 30px; height: 34px; border-radius: 6px; cursor: pointer; }
+
+  .tamano-block { background: var(--bg3); border: 0.5px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+  .tamano-block .size-price-row { margin-bottom: 6px; }
+  .tamano-receta-list .size-price-row { background: var(--bg); margin-bottom: 4px; }
+  .tamano-add-insumo { font-size: 0.72rem !important; padding: 6px !important; margin-top: 2px; }
   .modal-actions { display: flex; gap: 8px; margin-top: 1.2rem; }
   .btn-secondary { flex: 1; background: var(--bg3); border: 0.5px solid var(--border); color: var(--muted); border-radius: 8px; padding: 11px; font-family: inherit; font-weight: 600; cursor: pointer; }
   .btn-confirm { flex: 1; background: var(--tomate); border: none; color: #fff; border-radius: 8px; padding: 11px; font-family: inherit; font-weight: 600; cursor: pointer; }
@@ -650,15 +673,13 @@
     </select>
     <label>Emoji / ícono</label>
     <input type="text" id="prodEmoji" placeholder="🍕" maxlength="2">
-    <label>Tamaños y precios</label>
+    <label>Tamaños, precios y receta de stock</label>
+    <p style="font-size:0.72rem; color:var(--muted); margin-bottom:6px;">Cada tamaño descuenta sus propios insumos al venderse (ej: "2.25L" descuenta el insumo "Coca-Cola 2.25L", no el de 500ml).</p>
     <div id="prodTamanosLista"></div>
     <button type="button" class="btn-secondary" id="prodAgregarTamanoBtn" style="margin-top:6px; font-size:0.8rem; padding:8px;">+ Agregar tamaño</button>
     <label style="margin-top:10px;">
       <input type="checkbox" id="prodActivo" checked style="width:auto; margin-right:6px;">Producto activo
     </label>
-    <label style="margin-top:10px;">Receta (insumos que descuenta del stock al vender — opcional)</label>
-    <div id="prodRecetaLista"></div>
-    <button type="button" class="btn-secondary" id="prodAgregarInsumoBtn" style="margin-top:6px; font-size:0.8rem; padding:8px;">+ Agregar insumo a la receta</button>
     <div class="modal-actions">
       <button class="btn-secondary" id="modalProductoCancel">Cancelar</button>
       <button class="btn-confirm" id="modalProductoConfirm">Guardar</button>
@@ -1170,72 +1191,83 @@
 
   document.getElementById('nuevoProductoBtn').addEventListener('click', () => abrirModalProducto(null));
 
+  let tamanosEditando = []; // [{ nombre, precio, receta: [{insumoId, cantidad}] }]
+
   function renderTamanosLista(tamanos) {
     const cont = document.getElementById('prodTamanosLista');
-    cont.innerHTML = tamanos.map((t, i) => `
-      <div class="size-price-row" data-i="${i}">
-        <input type="text" class="tamano-nombre" value="${t.nombre}" placeholder="ej: Mediana, 1.5L">
-        <input type="number" class="tamano-precio" value="${t.precio}" placeholder="$">
-        <button type="button" class="del-tamano" data-i="${i}">✕</button>
-      </div>
-    `).join('');
-    cont.querySelectorAll('.del-tamano').forEach(b => b.addEventListener('click', () => {
+    if (insumos.length === 0) {
+      cont.innerHTML = '<p style="font-size:0.72rem; color:var(--muted); margin-bottom:6px;">⚠️ No hay insumos cargados en Stock todavía — podés guardar precios igual, pero sin receta de descuento de stock.</p>' + tamanos.map((t, i) => filaTamanoHTML(t, i)).join('');
+    } else {
+      cont.innerHTML = tamanos.map((t, i) => filaTamanoHTML(t, i)).join('');
+    }
+    cont.querySelectorAll('.del-tamano-block').forEach(b => b.addEventListener('click', () => {
+      sincronizarTamanosDesdeInputs();
       tamanosEditando.splice(parseInt(b.dataset.i), 1);
+      renderTamanosLista(tamanosEditando);
+    }));
+    cont.querySelectorAll('.del-receta-item').forEach(b => b.addEventListener('click', () => {
+      sincronizarTamanosDesdeInputs();
+      const ti = parseInt(b.dataset.ti), ri = parseInt(b.dataset.ri);
+      tamanosEditando[ti].receta.splice(ri, 1);
+      renderTamanosLista(tamanosEditando);
+    }));
+    cont.querySelectorAll('.tamano-add-insumo').forEach(b => b.addEventListener('click', () => {
+      if (insumos.length === 0) { toast('Cargá insumos primero en la pestaña Stock'); return; }
+      sincronizarTamanosDesdeInputs();
+      const ti = parseInt(b.dataset.ti);
+      tamanosEditando[ti].receta = tamanosEditando[ti].receta || [];
+      tamanosEditando[ti].receta.push({ insumoId: insumos[0].id, cantidad: 0 });
       renderTamanosLista(tamanosEditando);
     }));
   }
 
-  let tamanosEditando = [];
-  let recetaEditando = [];
+  function filaTamanoHTML(t, i) {
+    const receta = t.receta || [];
+    const recetaHTML = receta.map((r, ri) => `
+      <div class="size-price-row">
+        <select class="receta-insumo" data-ti="${i}" data-ri="${ri}" style="flex:1.4;">
+          ${insumos.map(ins => `<option value="${ins.id}" ${ins.id === r.insumoId ? 'selected' : ''}>${ins.nombre} (${ins.unidad})</option>`).join('')}
+        </select>
+        <input type="number" class="receta-cantidad" data-ti="${i}" data-ri="${ri}" value="${r.cantidad}" step="0.01" placeholder="Cant.">
+        <button type="button" class="del-tamano del-receta-item" data-ti="${i}" data-ri="${ri}">✕</button>
+      </div>
+    `).join('');
+    return `
+      <div class="tamano-block" data-i="${i}">
+        <div class="size-price-row">
+          <input type="text" class="tamano-nombre" value="${t.nombre}" placeholder="ej: Mediana, 1.5L">
+          <input type="number" class="tamano-precio" value="${t.precio}" placeholder="$">
+          <button type="button" class="del-tamano del-tamano-block" data-i="${i}">✕</button>
+        </div>
+        ${insumos.length > 0 ? `
+          <div class="tamano-receta-list">${recetaHTML}</div>
+          <button type="button" class="btn-secondary tamano-add-insumo" data-ti="${i}">+ insumo para "${t.nombre || 'este tamaño'}"</button>
+        ` : ''}
+      </div>
+    `;
+  }
 
   document.getElementById('prodAgregarTamanoBtn').addEventListener('click', () => {
     sincronizarTamanosDesdeInputs();
-    tamanosEditando.push({ nombre: '', precio: 0 });
+    tamanosEditando.push({ nombre: '', precio: 0, receta: [] });
     renderTamanosLista(tamanosEditando);
   });
 
   function sincronizarTamanosDesdeInputs() {
-    const filas = document.querySelectorAll('#prodTamanosLista .size-price-row');
-    tamanosEditando = Array.from(filas).map(fila => ({
-      nombre: fila.querySelector('.tamano-nombre').value.trim(),
-      precio: parseFloat(fila.querySelector('.tamano-precio').value) || 0
-    }));
+    const bloques = document.querySelectorAll('#prodTamanosLista .tamano-block');
+    tamanosEditando = Array.from(bloques).map((bloque, i) => {
+      const recetaFilas = bloque.querySelectorAll('.tamano-receta-list .size-price-row');
+      const receta = Array.from(recetaFilas).map(fila => ({
+        insumoId: fila.querySelector('.receta-insumo').value,
+        cantidad: parseFloat(fila.querySelector('.receta-cantidad').value) || 0
+      }));
+      return {
+        nombre: bloque.querySelector('.tamano-nombre').value.trim(),
+        precio: parseFloat(bloque.querySelector('.tamano-precio').value) || 0,
+        receta
+      };
+    });
   }
-
-  function renderRecetaLista() {
-    const cont = document.getElementById('prodRecetaLista');
-    if (insumos.length === 0) {
-      cont.innerHTML = '<p style="font-size:0.75rem; color:var(--muted);">Todavía no hay insumos cargados en Stock.</p>';
-      return;
-    }
-    cont.innerHTML = recetaEditando.map((r, i) => `
-      <div class="size-price-row" data-i="${i}">
-        <select class="receta-insumo" style="flex:1.4;">
-          ${insumos.map(ins => `<option value="${ins.id}" ${ins.id === r.insumoId ? 'selected' : ''}>${ins.nombre} (${ins.unidad})</option>`).join('')}
-        </select>
-        <input type="number" class="receta-cantidad" value="${r.cantidad}" step="0.01" placeholder="Cant.">
-        <button type="button" class="del-tamano" data-i="${i}">✕</button>
-      </div>
-    `).join('');
-    cont.querySelectorAll('.del-tamano').forEach(b => b.addEventListener('click', () => {
-      sincronizarRecetaDesdeInputs();
-      recetaEditando.splice(parseInt(b.dataset.i), 1);
-      renderRecetaLista();
-    }));
-  }
-  function sincronizarRecetaDesdeInputs() {
-    const filas = document.querySelectorAll('#prodRecetaLista .size-price-row');
-    recetaEditando = Array.from(filas).map(fila => ({
-      insumoId: fila.querySelector('.receta-insumo').value,
-      cantidad: parseFloat(fila.querySelector('.receta-cantidad').value) || 0
-    }));
-  }
-  document.getElementById('prodAgregarInsumoBtn').addEventListener('click', () => {
-    if (insumos.length === 0) { toast('Cargá insumos primero en la pestaña Stock'); return; }
-    sincronizarRecetaDesdeInputs();
-    recetaEditando.push({ insumoId: insumos[0].id, cantidad: 0 });
-    renderRecetaLista();
-  });
 
   function abrirModalProducto(id) {
     editandoProductoId = id;
@@ -1244,27 +1276,36 @@
     document.getElementById('prodNombre').value = p ? p.nombre : '';
     document.getElementById('prodCategoria').value = p ? p.categoria : 'Pizzas';
     document.getElementById('prodEmoji').value = p ? (p.emoji || '🍕') : '🍕';
-    tamanosEditando = p ? Object.entries(p.precios || {}).map(([nombre, precio]) => ({ nombre, precio }))
-                         : [{ nombre: 'Único', precio: 0 }];
+    if (p) {
+      const recetaPorTamano = p.recetaPorTamano || {};
+      tamanosEditando = Object.entries(p.precios || {}).map(([nombre, precio]) => ({
+        nombre, precio, receta: recetaPorTamano[nombre] ? JSON.parse(JSON.stringify(recetaPorTamano[nombre])) : []
+      }));
+    } else {
+      tamanosEditando = [{ nombre: 'Único', precio: 0, receta: [] }];
+    }
     renderTamanosLista(tamanosEditando);
-    recetaEditando = p && p.receta ? JSON.parse(JSON.stringify(p.receta)) : [];
-    renderRecetaLista();
     document.getElementById('prodActivo').checked = p ? p.activo : true;
     document.getElementById('modalProducto').classList.add('active');
   }
   document.getElementById('modalProductoCancel').addEventListener('click', () => document.getElementById('modalProducto').classList.remove('active'));
   document.getElementById('modalProductoConfirm').addEventListener('click', () => {
     sincronizarTamanosDesdeInputs();
-    sincronizarRecetaDesdeInputs();
     const precios = {};
-    tamanosEditando.forEach(t => { if (t.nombre) precios[t.nombre] = t.precio; });
-    const receta = recetaEditando.filter(r => r.insumoId && r.cantidad > 0);
+    const recetaPorTamano = {};
+    tamanosEditando.forEach(t => {
+      if (!t.nombre) return;
+      precios[t.nombre] = t.precio;
+      const recetaLimpia = (t.receta || []).filter(r => r.insumoId && r.cantidad > 0);
+      if (recetaLimpia.length > 0) recetaPorTamano[t.nombre] = recetaLimpia;
+    });
     const data = {
       nombre: document.getElementById('prodNombre').value.trim(),
       categoria: document.getElementById('prodCategoria').value,
       emoji: document.getElementById('prodEmoji').value.trim(),
       precios,
-      receta,
+      recetaPorTamano,
+      receta: firebase.firestore.FieldValue.delete(), // limpia el esquema viejo (receta por producto) si existía
       activo: document.getElementById('prodActivo').checked
     };
     if (!data.nombre) { toast('Falta el nombre del producto'); return; }
@@ -1397,8 +1438,13 @@
     const descuentos = {}; // insumoId -> cantidad total a restar
     itemsVendidos.forEach(item => {
       const prod = productos.find(p => p.id === item.productoId);
-      if (!prod || !prod.receta || prod.receta.length === 0) return;
-      prod.receta.forEach(r => {
+      if (!prod) return;
+      // Esquema nuevo: receta específica del tamaño vendido
+      let receta = prod.recetaPorTamano && prod.recetaPorTamano[item.tamano];
+      // Compatibilidad: si el producto quedó con el esquema viejo (receta única por producto)
+      if (!receta && prod.receta && prod.receta.length > 0) receta = prod.receta;
+      if (!receta || receta.length === 0) return;
+      receta.forEach(r => {
         descuentos[r.insumoId] = (descuentos[r.insumoId] || 0) + (r.cantidad * item.cantidad);
       });
     });
@@ -1525,11 +1571,15 @@
     });
     const aBorrar = [];
     let gruposConDuplicados = 0;
+    const contarReceta = (p) => {
+      if (p.recetaPorTamano) return Object.values(p.recetaPorTamano).reduce((s, r) => s + r.length, 0);
+      return p.receta?.length || 0;
+    };
     Object.values(grupos).forEach(lista => {
       if (lista.length <= 1) return;
       gruposConDuplicados++;
       // Conservamos el que tenga más insumos en la receta; si hay empate, el primero
-      lista.sort((a, b) => (b.receta?.length || 0) - (a.receta?.length || 0));
+      lista.sort((a, b) => contarReceta(b) - contarReceta(a));
       lista.slice(1).forEach(p => aBorrar.push(p.id));
     });
     if (aBorrar.length === 0) { toast('No se encontraron productos duplicados'); return; }
