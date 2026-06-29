@@ -1,9 +1,15 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.1
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v1.2
   Fecha de esta versión: 2026-06-29
-  Cambios respecto a v1.0: agregado login con Google
+  Cambios respecto a v1.1: conectado al proyecto Firebase real
+  pizzar-b48af (antes tenía placeholders). PENDIENTE: activar
+  Authentication (Email/contraseña + Google), crear el usuario
+  admin, y configurar Firestore en modo producción con las
+  reglas de seguridad correspondientes.
+  ──
+  v1.1: agregado login con Google
   (GoogleAuthProvider + signInWithPopup) como alternativa al
   login con email/contraseña. Requiere habilitar el proveedor
   Google en Firebase Authentication → Sign-in method.
@@ -515,12 +521,12 @@
 <script>
   /* ════════ FIREBASE CONFIG — REEMPLAZAR CON LOS DATOS REALES DEL PROYECTO ════════ */
   const firebaseConfig = {
-    apiKey: "TU_API_KEY",
-    authDomain: "pizzar-XXXX.firebaseapp.com",
-    projectId: "pizzar-XXXX",
-    storageBucket: "pizzar-XXXX.appspot.com",
-    messagingSenderId: "XXXXXXXXXX",
-    appId: "XXXXXXXXXXXXXXXXXXXXX"
+    apiKey: "AIzaSyBSKWqpPwUsF-jq_GES1fCwiZZACz0Jz_I",
+    authDomain: "pizzar-b48af.firebaseapp.com",
+    projectId: "pizzar-b48af",
+    storageBucket: "pizzar-b48af.firebasestorage.app",
+    messagingSenderId: "688726516053",
+    appId: "1:688726516053:web:2e11e63aec82225e82cfdc"
   };
   firebase.initializeApp(firebaseConfig);
   const auth = firebase.auth();
