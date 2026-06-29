@@ -1,8 +1,15 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.0
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.1
   Fecha de esta versión: 2026-06-29
+  Cambios respecto a v2.0: la precarga de insumos básicos ya no
+  es automática (fallaba si la colección no estaba vacía en el
+  momento exacto de cargar la página — si el usuario ya había
+  agregado algo a mano antes, nunca se disparaba). Ahora es un
+  botón "📥 Cargar insumos básicos" en Stock, que agrega solo los
+  que falten comparando por nombre (sin duplicar lo ya cargado).
+  ──
   Cambios respecto a v1.9: agregado autocompletado (datalist
   HTML) en el campo "Nombre" del modal de insumo — a medida que
   se escribe, sugiere los insumos ya cargados en Stock, para
@@ -525,7 +532,8 @@
 
     <!-- VISTA STOCK -->
     <section class="view" id="view-stock">
-      <div class="menu-toolbar">
+      <div class="menu-toolbar" style="gap:8px;">
+        <button class="btn-secondary" style="width:auto; padding:10px 16px; font-size:0.85rem;" id="cargarBasicosBtn">📥 Cargar insumos básicos</button>
         <button class="btn-tomate" style="width:auto; padding:10px 18px;" id="nuevoInsumoBtn">+ Nuevo insumo</button>
       </div>
       <div id="insumosLista"></div>
@@ -1248,14 +1256,13 @@
   function cargarInsumos() {
     db.collection('insumos').onSnapshot(snap => {
       insumos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (insumos.length === 0) precargarInsumosBasicos();
       renderInsumosLista();
     });
   }
 
-  function precargarInsumosBasicos() {
+  function listaInsumosBasicos() {
     const ins = (nombre, unidad, stockActual, stockMinimo) => ({ nombre, unidad, stockActual, stockMinimo });
-    const basicos = [
+    return [
       ins('Harina', 'kg', 25, 5),
       ins('Mozzarella', 'kg', 15, 3),
       ins('Salsa de tomate', 'kg', 10, 2),
@@ -1277,8 +1284,15 @@
       ins('Pan de miga', 'unidad', 2, 0.5),
       ins('Roquefort', 'kg', 1.5, 0.3)
     ];
-    basicos.forEach(i => db.collection('insumos').add(i));
   }
+
+  document.getElementById('cargarBasicosBtn').addEventListener('click', () => {
+    const nombresExistentes = new Set(insumos.map(i => i.nombre.trim().toLowerCase()));
+    const faltantes = listaInsumosBasicos().filter(b => !nombresExistentes.has(b.nombre.trim().toLowerCase()));
+    if (faltantes.length === 0) { toast('Ya tenés todos los insumos básicos cargados'); return; }
+    faltantes.forEach(i => db.collection('insumos').add(i));
+    toast(`Se agregaron ${faltantes.length} insumos básicos nuevos`);
+  });
 
   function renderInsumosLista() {
     const datalist = document.getElementById('insumosDatalist');
