@@ -168,6 +168,18 @@
   .toast.warn { border-left-color:var(--amber); }
   @keyframes toastIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
   button { touch-action:manipulation; }
+
+/* ── COMANDAS ── */
+.comanda-card{background:#1e2535;border:2px solid #2d3f5a;border-radius:12px;padding:14px 16px}
+.comanda-card.urgente{border-color:#ef4444}
+.comanda-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.comanda-num{font-weight:700;font-size:0.95rem}
+.comanda-time{font-size:0.72rem;color:#64748b}
+.comanda-items{font-size:0.82rem;color:#cbd5e1;margin-bottom:10px;line-height:1.7}
+.comanda-item{display:flex;gap:8px}
+.comanda-cant{font-weight:700;color:#f1f5f9;min-width:24px}
+.btn-listo{background:#22c55e;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:0.82rem;font-weight:700;cursor:pointer;width:100%}
+
 </style>
 </head>
 <body>
@@ -228,6 +240,7 @@
     <button class="tab-btn" data-view="pedidos" style="display:none;">Pedidos</button>
     <button class="tab-btn" data-view="stock" style="display:none;">Stock</button>
     <button class="tab-btn" data-view="empleados" style="display:none;">Empleados</button>
+    <button class="tab-btn" data-view="cocina" style="display:none;">🍕 Cocina</button>
     <button class="tab-btn" data-view="reportes">Reportes</button>
     <button class="tab-btn" data-view="historial">Historial</button>
     <button class="tab-btn" data-view="configuracion">Configuración</button>
@@ -323,7 +336,20 @@
       <div class="plus-locked"><span class="ti-lock">👥</span><h4 style="margin-bottom:6px;">Gestión de empleados</h4><p>Próximamente: turnos, accesos y permisos por empleado.</p></div>
     </section>
 
-    <section class="view" id="view-configuracion">
+    
+<section class="view" id="view-cocina">
+  <div style="padding:12px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h3 style="font-size:1rem;font-weight:700">📋 Comandas pendientes</h3>
+      <button onclick="imprimirComanda()" style="background:#7c3aed;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:0.78rem;font-weight:600;cursor:pointer">🖨️ Reimprimir</button>
+    </div>
+    <div id="listaComandas" style="display:flex;flex-direction:column;gap:10px">
+      <div style="text-align:center;color:#888;padding:32px;font-size:0.84rem">Sin comandas pendientes</div>
+    </div>
+  </div>
+</section>
+
+<section class="view" id="view-configuracion">
 <div class="config-section">
         <h4>💾 Backup de datos</h4>
         <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">Se genera automáticamente una vez por día. Guardá el archivo en un lugar seguro.</p>
@@ -446,6 +472,7 @@
     <div class="toggle-row"><div class="toggle-row-name">Control de stock</div><label class="switch"><input type="checkbox" id="flagStock"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Gestión de empleados</div><label class="switch"><input type="checkbox" id="flagEmpleados"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Registro de gastos</div><label class="switch"><input type="checkbox" id="flagGastos"><span class="slider-switch"></span></label></div>
+    <div class="toggle-row"><div class="toggle-row-name">📋 Comandas (cocina)</div><label class="switch"><input type="checkbox" id="flagComandas"><span class="slider-switch"></span></label></div>
     <div class="modal-actions">
       <button class="btn-secondary" id="modalFeaturesCancel">Cerrar</button>
       <button class="btn-confirm" id="modalFeaturesGuardar">Guardar</button>
@@ -499,7 +526,7 @@
   let productos=[], carrito=[], metodoPago='efectivo';
   let categoriaActiva='Todas', grupoActivo=null;
   let productoSeleccionado=null, editandoProductoId=null;
-  let featuresActuales={pedidosOnlineHabilitado:false,stockHabilitado:false,empleadosHabilitado:false,gastosHabilitado:false};
+  let featuresActuales={pedidosOnlineHabilitado:false,stockHabilitado:false,empleadosHabilitado:false,gastosHabilitado:false,comandasHabilitado:false};
   let rolActual=null, pinCajeroActual='2468', whatsappNumero='';
   let gastosHoy=[], insumos=[], editandoInsumoId=null;
   let ventasHistorialActual=[], estaOnline=navigator.onLine;
@@ -852,6 +879,8 @@
     document.querySelector('.tab-btn[data-view="pedidos"]').style.display=(featuresActuales.pedidosOnlineHabilitado&&rolActual==='dueño')?'':'none';
     document.querySelector('.tab-btn[data-view="empleados"]').style.display=(featuresActuales.empleadosHabilitado&&rolActual==='dueño')?'':'none';
     document.querySelector('.tab-btn[data-view="stock"]').style.display=featuresActuales.stockHabilitado?'':'none';
+  const tabComanda=document.querySelector('.tab-btn[data-view="cocina"]');
+  if(tabComanda) tabComanda.style.display=featuresActuales.comandasHabilitado?'':'none';
     const gs=document.getElementById('gastosSection');if(gs)gs.style.display=featuresActuales.gastosHabilitado?'':'none';
   }
 
@@ -904,13 +933,13 @@
   document.getElementById('pinConfirmBtn').addEventListener('click',()=>{
     if(document.getElementById('pinInput').value===PIN_RAVENTECHS){
       document.getElementById('modalPin').classList.remove('active');
-      document.getElementById('flagPedidos').checked=!!featuresActuales.pedidosOnlineHabilitado;document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;document.getElementById('flagEmpleados').checked=!!featuresActuales.empleadosHabilitado;document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;
+      document.getElementById('flagPedidos').checked=!!featuresActuales.pedidosOnlineHabilitado;document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;document.getElementById('flagEmpleados').checked=!!featuresActuales.empleadosHabilitado;document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;document.getElementById('flagComandas').checked=!!featuresActuales.comandasHabilitado;
       document.getElementById('modalFeatures').classList.add('active');
     }else{document.getElementById('pinError').textContent='PIN incorrecto';}
   });
   document.getElementById('modalFeaturesCancel').addEventListener('click',()=>document.getElementById('modalFeatures').classList.remove('active'));
   document.getElementById('modalFeaturesGuardar').addEventListener('click',()=>{
-    const nuevas={pedidosOnlineHabilitado:document.getElementById('flagPedidos').checked,stockHabilitado:document.getElementById('flagStock').checked,empleadosHabilitado:document.getElementById('flagEmpleados').checked,gastosHabilitado:document.getElementById('flagGastos').checked};
+    const nuevas={pedidosOnlineHabilitado:document.getElementById('flagPedidos').checked,stockHabilitado:document.getElementById('flagStock').checked,empleadosHabilitado:document.getElementById('flagEmpleados').checked,gastosHabilitado:document.getElementById('flagGastos').checked,comandasHabilitado:document.getElementById('flagComandas').checked};
     db.collection('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{featuresActuales=nuevas;renderPlusStatus();toast('Features actualizadas');document.getElementById('modalFeatures').classList.remove('active');});
   });
 
@@ -975,6 +1004,127 @@ function chequearBackupDiario() {
   var el = document.getElementById('ultimoBackupFecha'); if (el && ultimo) el.textContent = ultimo;
   if (ultimo !== hoy) { setTimeout(function(){generarBackup(true);},5000); }
 }
+
+
+// ══ MÓDULO COMANDAS ══════════════════════════════════
+let comandasListener = null;
+let contadorComanda = 1;
+
+function iniciarComandasListener() {
+  if (comandasListener) return;
+  comandasListener = db.collection('comandas')
+    .where('estado', '==', 'pendiente')
+    .orderBy('ts', 'asc')
+    .onSnapshot(snap => {
+      const cont = document.getElementById('listaComandas');
+      if (!snap.docs.length) {
+        cont.innerHTML = '<div style="text-align:center;color:#888;padding:32px;font-size:0.84rem">Sin comandas pendientes ✅</div>';
+        return;
+      }
+      cont.innerHTML = snap.docs.map(d => {
+        const c = d.data();
+        const min = c.ts ? Math.floor((Date.now() - c.ts.toMillis()) / 60000) : 0;
+        const urgente = min >= 15 ? 'urgente' : '';
+        const items = (c.items || []).map(i =>
+          `<div class="comanda-item"><span class="comanda-cant">${i.cantidad}x</span><span>${i.nombre}</span></div>`
+        ).join('');
+        return `<div class="comanda-card ${urgente}">
+          <div class="comanda-header">
+            <span class="comanda-num">Comanda #${c.numero || '—'}</span>
+            <span class="comanda-time">${min} min${min >= 15 ? ' ⚠️' : ''}</span>
+          </div>
+          <div class="comanda-items">${items}</div>
+          ${c.notas ? `<div style="font-size:0.75rem;color:#f59e0b;margin-bottom:8px">📝 ${c.notas}</div>` : ''}
+          <button class="btn-listo" onclick="marcarListo('${d.id}')">✅ Listo — entregar</button>
+        </div>`;
+      }).join('');
+    }, e => logError('comandasListener', e.message));
+}
+
+function marcarListo(id) {
+  db.collection('comandas').doc(id).update({
+    estado: 'listo',
+    listoEn: firebase.firestore.FieldValue.serverTimestamp()
+  }).catch(e => logError('marcarListo', e.message));
+}
+
+// Enviar comanda desde la caja
+function enviarComanda(items, notas) {
+  if (!featuresActuales.comandasHabilitado) return;
+  const comanda = {
+    numero:  contadorComanda++,
+    items:   items.map(i => ({ nombre: i.nombre, cantidad: i.cantidad || 1 })),
+    notas:   notas || '',
+    estado:  'pendiente',
+    ts:      firebase.firestore.FieldValue.serverTimestamp()
+  };
+  db.collection('comandas').add(comanda)
+    .then(() => {
+      toast('Comanda enviada a cocina');
+      if (featuresActuales.comandasHabilitado) imprimirComandaDirecta(comanda);
+    })
+    .catch(e => logError('enviarComanda', e.message));
+}
+
+// Imprimir comanda en impresora térmica
+function imprimirComandaDirecta(comanda) {
+  const win = window.open('', '_blank', 'width=302,height=600');
+  if (!win) return;
+  const items = (comanda.items || []).map(i => `<tr><td>${i.cantidad}x</td><td>${i.nombre}</td></tr>`).join('');
+  win.document.write(`<!DOCTYPE html><html><head><style>
+    body{font-family:monospace;font-size:14px;width:280px;margin:0;padding:8px}
+    h2{text-align:center;font-size:16px;border-bottom:1px dashed #000;padding-bottom:4px;margin-bottom:8px}
+    table{width:100%}td{padding:2px 4px}
+    .footer{border-top:1px dashed #000;margin-top:8px;text-align:center;font-size:11px;padding-top:4px}
+    @media print{button{display:none}}
+  </style></head><body>
+    <h2>🍕 COMANDA #${comanda.numero || '—'}</h2>
+    <p style="text-align:center;font-size:11px;margin:0">${new Date().toLocaleTimeString('es-AR')}</p>
+    <table>${items}</table>
+    ${comanda.notas ? `<p><b>Nota:</b> ${comanda.notas}</p>` : ''}
+    <div class="footer">PizzAR — RavenTechs</div>
+    <button onclick="window.print();window.close()" style="margin:8px auto;display:block;padding:4px 16px">Imprimir</button>
+  </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+window.imprimirComanda = function() {
+  // Reimprimir la última comanda pendiente
+  db.collection('comandas').where('estado','==','pendiente').orderBy('ts','desc').limit(1).get()
+    .then(snap => {
+      if (snap.empty) { toast('Sin comandas pendientes'); return; }
+      imprimirComandaDirecta(snap.docs[0].data());
+    });
+};
+
+window.marcarListo = marcarListo;
+
+// Iniciar listener cuando se activa la tab cocina
+document.querySelector('.tab-btn[data-view="cocina"]')?.addEventListener('click', () => {
+  if (featuresActuales.comandasHabilitado) iniciarComandasListener();
+});
+
+// ══ P2: EXPORTAR CSV ═════════════════════════════════
+function exportarCSV() {
+  db.collection('ventas').orderBy('ts','desc').limit(500).get()
+    .then(snap => {
+      const rows = [['Fecha','Producto','Cantidad','Precio','Total']];
+      snap.docs.forEach(d => {
+        const v = d.data();
+        const fecha = v.fechaDia || (v.ts?.toDate ? v.ts.toDate().toLocaleDateString('es-AR') : '—');
+        rows.push([fecha, v.nombre||'—', v.cantidad||1, v.precio||0, v.total||0]);
+      });
+      const csv = rows.map(r => r.join(',')).join('\n');
+      const a = document.createElement('a');
+      a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+      a.download = 'pizzar-ventas-' + new Date().toISOString().slice(0,10) + '.csv';
+      a.click();
+      toast('CSV exportado');
+    })
+    .catch(e => logError('exportarCSV', e.message));
+}
+window.exportarCSV = exportarCSV;
 
 </script>
 </body>
