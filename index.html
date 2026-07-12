@@ -266,6 +266,8 @@
             <button class="pago-chip" data-pago="debito">Débito</button>
             <button class="pago-chip" data-pago="transferencia">Transferencia</button>
           </div>
+          <input type="text" id="notasComanda" placeholder="Notas para cocina (opcional)" style="display:none;width:100%;margin-bottom:6px;padding:8px 12px;border-radius:8px;border:1px solid #2d3f5a;background:#1e293b;color:#f1f5f9;font-size:0.82rem">
+          <button class="btn-tomate" id="enviarCocinaBtn" style="display:none;background:#7c3aed;margin-bottom:8px" onclick="enviarACocina()">📋 Enviar a cocina</button>
           <button class="btn-tomate" id="cobrarBtn">Cobrar y cerrar venta</button>
         </div>
       </div>
@@ -693,6 +695,12 @@
       document.querySelectorAll('.qty-btn').forEach(b=>b.addEventListener('click',()=>{const i=parseInt(b.dataset.i);carrito[i].cantidad+=parseInt(b.dataset.d);if(carrito[i].cantidad<=0)carrito.splice(i,1);renderCarrito();}));
     }
     document.getElementById('carritoTotal').textContent='$'+carrito.reduce((s,it)=>s+it.precio*it.cantidad,0);
+    // Mostrar/ocultar botón enviar a cocina y campo notas
+    const btnC = document.getElementById('enviarCocinaBtn');
+    const notasC = document.getElementById('notasComanda');
+    const mostrar = featuresActuales.comandasHabilitado && carrito.length > 0;
+    if(btnC) btnC.style.display = mostrar ? 'block' : 'none';
+    if(notasC) notasC.style.display = mostrar ? 'block' : 'none';
   }
 
   document.querySelectorAll('.pago-chip').forEach(chip=>{chip.addEventListener('click',()=>{document.querySelectorAll('.pago-chip').forEach(c=>c.classList.remove('active'));chip.classList.add('active');metodoPago=chip.dataset.pago;});});
@@ -1012,6 +1020,27 @@ let contadorComanda = 1;
 
 function iniciarComandasListener() {
   if (comandasListener) return;
+  // También escuchar cuando un pedido pasa a "listo" para notificar al cajero
+  db.collection('comandas')
+    .where('estado', '==', 'listo')
+    .orderBy('listoEn', 'desc')
+    .limit(1)
+    .onSnapshot(snap => {
+      snap.docChanges().forEach(change => {
+        if (change.type === 'added') {
+          const c = change.doc.data();
+          toast('✅ Comanda #' + (c.numero || '—') + ' lista para entregar');
+          // Notificación del sistema si la app está en background
+          if (Notification.permission === 'granted') {
+            new Notification('🍕 Pedido listo!', {
+              body: 'Comanda #' + (c.numero || '—') + ' lista para entregar',
+              icon: '/pizzAr/icon-192.png'
+            });
+          }
+        }
+      });
+    });
+
   comandasListener = db.collection('comandas')
     .where('estado', '==', 'pendiente')
     .orderBy('ts', 'asc')
@@ -1125,6 +1154,15 @@ function exportarCSV() {
     .catch(e => logError('exportarCSV', e.message));
 }
 window.exportarCSV = exportarCSV;
+
+
+window.enviarACocina = function() {
+  if (!featuresActuales.comandasHabilitado) return;
+  if (!carrito || !carrito.length) { toast('El carrito está vacío'); return; }
+  const items = carrito.map(i => ({ nombre: i.nombre, cantidad: i.cantidad || 1 }));
+  const notas = document.getElementById('notasComanda')?.value || '';
+  enviarComanda(items, notas);
+};
 
 </script>
 </body>
