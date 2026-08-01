@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.6
-  Fecha: 2026-07-04
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.7
+  Fecha: 2026-08-01
+  - v2.7 (01/08/2026): Seguridad — sanitizar() anti-XSS, App Check SDK preparado.
   Cambios respecto a v2.5:
   - NUEVO: Modo offline completo (estándar aprobado 2026-07-04)
     · IndexedDB con stores ventas_pendientes y cierres_pendientes
@@ -26,6 +27,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
@@ -601,8 +603,22 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
     appId: "1:688726516053:web:2e11e63aec82225e82cfdc"
   };
   firebase.initializeApp(firebaseConfig);
+  var APPCHECK_KEY = '';
+  if (APPCHECK_KEY && typeof firebase.appCheck === 'function') {
+    firebase.appCheck().activate(
+      new firebase.appCheck.ReCaptchaV3Provider(APPCHECK_KEY), true);
+  }
   const auth = firebase.auth();
   const db = firebase.firestore();
+
+  function sanitizar(txt) {
+    return String(txt || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   function logError(origen, mensaje, extra) {
     try { db.collection('errores').add({ app:'PizzAR', origen, mensaje:String(mensaje), extra:extra?String(extra):null, uid:auth.currentUser?auth.currentUser.uid:'anonimo', ts:firebase.firestore.FieldValue.serverTimestamp() }); } catch(_) {}
@@ -738,19 +754,19 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
   function renderCatFilters(){
     const grupos=[...new Set(productos.map(p=>grupoDe(p.categoria)))];
     if(!grupoActivo||!grupos.includes(grupoActivo)) grupoActivo=grupos[0]||null;
-    document.getElementById('grupoFilters').innerHTML=grupos.map(g=>`<button class="grupo-chip ${g===grupoActivo?'active':''}" data-grupo="${g}">${g}</button>`).join('');
+    document.getElementById('grupoFilters').innerHTML=grupos.map(g=>`<button class="grupo-chip ${g===grupoActivo?'active':''}" data-grupo="${sanitizar(g)}">${sanitizar(g)}</button>`).join('');
     document.querySelectorAll('.grupo-chip').forEach(chip=>{chip.addEventListener('click',()=>{grupoActivo=chip.dataset.grupo;categoriaActiva='Todas';renderCatFilters();renderProductosGrid();});});
     const cats=[...new Set(productos.filter(p=>grupoDe(p.categoria)===grupoActivo).map(p=>p.categoria))];
     const catCont=document.getElementById('catFilters');
     if(cats.length<=1){catCont.innerHTML='';return;}
-    catCont.innerHTML=['Todas',...cats].map(c=>`<button class="cat-chip ${c===categoriaActiva?'active':''}" data-cat="${c}">${c}</button>`).join('');
+    catCont.innerHTML=['Todas',...cats].map(c=>`<button class="cat-chip ${c===categoriaActiva?'active':''}" data-cat="${sanitizar(c)}">${sanitizar(c)}</button>`).join('');
     document.querySelectorAll('.cat-chip').forEach(chip=>{chip.addEventListener('click',()=>{categoriaActiva=chip.dataset.cat;renderCatFilters();renderProductosGrid();});});
   }
 
   function renderProductosGrid(){
     let lista=productos.filter(p=>grupoDe(p.categoria)===grupoActivo);
     if(categoriaActiva!=='Todas') lista=lista.filter(p=>p.categoria===categoriaActiva);
-    document.getElementById('productosGrid').innerHTML=lista.map(p=>`<div class="producto-btn ${p.activo?'':'inactivo'}" data-id="${p.id}"><div class="producto-emoji">${p.emoji||'🍕'}</div><div class="producto-nombre">${p.nombre}</div><div class="producto-precio">$${menorPrecio(p)}</div></div>`).join('');
+    document.getElementById('productosGrid').innerHTML=lista.map(p=>`<div class="producto-btn ${p.activo?'':'inactivo'}" data-id="${p.id}"><div class="producto-emoji">${p.emoji||'🍕'}</div><div class="producto-nombre">${sanitizar(p.nombre)}</div><div class="producto-precio">$${menorPrecio(p)}</div></div>`).join('');
     document.querySelectorAll('.producto-btn').forEach(card=>card.addEventListener('click',()=>abrirModalAgregar(card.dataset.id)));
   }
 
@@ -759,7 +775,7 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
   function abrirModalAgregar(id){
     productoSeleccionado=productos.find(p=>p.id===id);if(!productoSeleccionado)return;
     document.getElementById('modalAgregarNombre').textContent=productoSeleccionado.nombre;
-    document.getElementById('modalAgregarTamano').innerHTML=Object.entries(productoSeleccionado.precios||{}).filter(([,v])=>v>0).map(([t,v])=>`<option value="${t}">${t} — $${v}</option>`).join('');
+    document.getElementById('modalAgregarTamano').innerHTML=Object.entries(productoSeleccionado.precios||{}).filter(([,v])=>v>0).map(([t,v])=>`<option value="${sanitizar(t)}">${sanitizar(t)} — $${v}</option>`).join('');
     document.getElementById('modalAgregarCantidad').value=1;
     document.getElementById('modalAgregar').classList.add('active');
   }
@@ -775,7 +791,7 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
     const cont=document.getElementById('carritoItems');
     if(!carrito.length){cont.innerHTML='<div class="empty-cart">Tocá un producto para agregarlo</div>';}
     else{
-      cont.innerHTML=carrito.map((item,i)=>`<div class="carrito-item"><div class="carrito-item-info">${item.nombre} <span style="color:var(--muted)">(${item.tamano})</span></div><div class="carrito-item-qty"><button class="qty-btn" data-i="${i}" data-d="-1">−</button><span>${item.cantidad}</span><button class="qty-btn" data-i="${i}" data-d="1">+</button></div><div>$${item.precio*item.cantidad}</div></div>`).join('');
+      cont.innerHTML=carrito.map((item,i)=>`<div class="carrito-item"><div class="carrito-item-info">${sanitizar(item.nombre)} <span style="color:var(--muted)">(${sanitizar(item.tamano)})</span></div><div class="carrito-item-qty"><button class="qty-btn" data-i="${i}" data-d="-1">−</button><span>${item.cantidad}</span><button class="qty-btn" data-i="${i}" data-d="1">+</button></div><div>$${item.precio*item.cantidad}</div></div>`).join('');
       document.querySelectorAll('.qty-btn').forEach(b=>b.addEventListener('click',()=>{const i=parseInt(b.dataset.i);carrito[i].cantidad+=parseInt(b.dataset.d);if(carrito[i].cantidad<=0)carrito.splice(i,1);renderCarrito();}));
     }
     document.getElementById('carritoTotal').textContent='$'+carrito.reduce((s,it)=>s+it.precio*it.cantidad,0);
@@ -805,7 +821,7 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
 
   /* ════ MENU ADMIN ════ */
   function renderProductosLista(){
-    document.getElementById('productosLista').innerHTML=productos.map(p=>`<div class="producto-row"><div><div class="producto-row-name">${p.emoji||'🍕'} ${p.nombre}</div><div class="producto-row-meta">${p.categoria} — ${p.activo?'Activo':'Inactivo'}</div></div><div class="row-actions"><button data-edit="${p.id}">✏️</button><button data-del="${p.id}">🗑️</button></div></div>`).join('');
+    document.getElementById('productosLista').innerHTML=productos.map(p=>`<div class="producto-row"><div><div class="producto-row-name">${p.emoji||'🍕'} ${sanitizar(p.nombre)}</div><div class="producto-row-meta">${sanitizar(p.categoria)} — ${p.activo?'Activo':'Inactivo'}</div></div><div class="row-actions"><button data-edit="${p.id}">✏️</button><button data-del="${p.id}">🗑️</button></div></div>`).join('');
     document.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>abrirModalProducto(b.dataset.edit)));
     document.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este producto?'))db.collection('productos').doc(b.dataset.del).delete().then(()=>toast('Producto eliminado'));}));
   }
@@ -824,8 +840,8 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
 
   function filaTamanoHTML(t,i){
     const receta=t.receta||[];
-    const rHTML=receta.map((r,ri)=>`<div class="size-price-row"><select class="receta-insumo" data-ti="${i}" data-ri="${ri}" style="flex:1.4;">${insumos.map(ins=>`<option value="${ins.id}" ${ins.id===r.insumoId?'selected':''}>${ins.nombre} (${ins.unidad})</option>`).join('')}</select><input type="number" class="receta-cantidad" data-ti="${i}" data-ri="${ri}" value="${r.cantidad}" step="0.01" placeholder="Cant."><button type="button" class="del-tamano del-receta-item" data-ti="${i}" data-ri="${ri}">✕</button></div>`).join('');
-    return `<div class="tamano-block" data-i="${i}"><div class="size-price-row"><input type="text" class="tamano-nombre" value="${t.nombre}" placeholder="ej: Mediana"><input type="number" class="tamano-precio" value="${t.precio}" placeholder="$"><button type="button" class="del-tamano del-tamano-block" data-i="${i}">✕</button></div>${insumos.length>0?`<div class="tamano-receta-list">${rHTML}</div><button type="button" class="btn-secondary tamano-add-insumo" data-ti="${i}">+ insumo para "${t.nombre||'este tamaño'}"</button>`:''}</div>`;
+    const rHTML=receta.map((r,ri)=>`<div class="size-price-row"><select class="receta-insumo" data-ti="${i}" data-ri="${ri}" style="flex:1.4;">${insumos.map(ins=>`<option value="${ins.id}" ${ins.id===r.insumoId?'selected':''}>${sanitizar(ins.nombre)} (${sanitizar(ins.unidad)})</option>`).join('')}</select><input type="number" class="receta-cantidad" data-ti="${i}" data-ri="${ri}" value="${r.cantidad}" step="0.01" placeholder="Cant."><button type="button" class="del-tamano del-receta-item" data-ti="${i}" data-ri="${ri}">✕</button></div>`).join('');
+    return `<div class="tamano-block" data-i="${i}"><div class="size-price-row"><input type="text" class="tamano-nombre" value="${sanitizar(t.nombre)}" placeholder="ej: Mediana"><input type="number" class="tamano-precio" value="${t.precio}" placeholder="$"><button type="button" class="del-tamano del-tamano-block" data-i="${i}">✕</button></div>${insumos.length>0?`<div class="tamano-receta-list">${rHTML}</div><button type="button" class="btn-secondary tamano-add-insumo" data-ti="${i}">+ insumo para "${sanitizar(t.nombre||'este tamaño')}"</button>`:''}</div>`;
   }
 
   document.getElementById('prodAgregarTamanoBtn').addEventListener('click',()=>{sincronizarTamanosDesdeInputs();tamanosEditando.push({nombre:'',precio:0,receta:[]});renderTamanosLista(tamanosEditando);});
@@ -884,10 +900,10 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
   document.getElementById('cargarBasicosBtn').addEventListener('click',()=>{const ex=new Set(insumos.map(i=>i.nombre.trim().toLowerCase()));const falt=listaInsumosBasicos().filter(b=>!ex.has(b.nombre.trim().toLowerCase()));if(!falt.length){toast('Ya tenés todos los insumos básicos');return;}falt.forEach(i=>db.collection('insumos').add(i));toast(`Se agregaron ${falt.length} insumos básicos`);});
 
   function renderInsumosLista(){
-    const dl=document.getElementById('insumosDatalist');if(dl)dl.innerHTML=insumos.map(i=>`<option value="${i.nombre}"></option>`).join('');
+    const dl=document.getElementById('insumosDatalist');if(dl)dl.innerHTML=insumos.map(i=>`<option value="${sanitizar(i.nombre)}"></option>`).join('');
     const cont=document.getElementById('insumosLista');if(!cont)return;
     if(!insumos.length){cont.innerHTML='<p style="color:var(--muted);font-size:0.85rem;">Todavía no cargaste insumos.</p>';return;}
-    cont.innerHTML=insumos.map(ins=>{const bajo=ins.stockActual<=ins.stockMinimo;return`<div class="producto-row"><div><div class="producto-row-name">${bajo?'⚠️ ':''}${ins.nombre}</div><div class="producto-row-meta" style="${bajo?'color:var(--tomate);font-weight:600;':''}">Stock: ${ins.stockActual} ${ins.unidad} (mínimo ${ins.stockMinimo})</div></div><div class="row-actions"><button data-editins="${ins.id}">✏️</button><button data-delins="${ins.id}">🗑️</button></div></div>`;}).join('');
+    cont.innerHTML=insumos.map(ins=>{const bajo=ins.stockActual<=ins.stockMinimo;return`<div class="producto-row"><div><div class="producto-row-name">${bajo?'⚠️ ':''}${sanitizar(ins.nombre)}</div><div class="producto-row-meta" style="${bajo?'color:var(--tomate);font-weight:600;':''}">Stock: ${ins.stockActual} ${sanitizar(ins.unidad)} (mínimo ${ins.stockMinimo})</div></div><div class="row-actions"><button data-editins="${ins.id}">✏️</button><button data-delins="${ins.id}">🗑️</button></div></div>`;}).join('');
     cont.querySelectorAll('[data-editins]').forEach(b=>b.addEventListener('click',()=>abrirModalInsumo(b.dataset.editins)));
     cont.querySelectorAll('[data-delins]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este insumo?'))db.collection('insumos').doc(b.dataset.delins).delete().then(()=>toast('Insumo eliminado'));}));
   }
@@ -914,8 +930,8 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
       document.getElementById('repIngresosDia').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
       const cp={},cg={};ventas.forEach(v=>{(v.items||[]).forEach(it=>{cp[it.nombre]=(cp[it.nombre]||0)+it.cantidad;});cg[v.metodoPago]=(cg[v.metodoPago]||0)+1;});
       const top=Object.entries(cp).sort((a,b)=>b[1]-a[1]).slice(0,5);
-      document.getElementById('topProductos').innerHTML=top.length?top.map(([n,c])=>`<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
-      document.getElementById('porPago').innerHTML=Object.entries(cg).length?Object.entries(cg).map(([n,c])=>`<div class="top-row"><span>${n}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
+      document.getElementById('topProductos').innerHTML=top.length?top.map(([n,c])=>`<div class="top-row"><span>${sanitizar(n)}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
+      document.getElementById('porPago').innerHTML=Object.entries(cg).length?Object.entries(cg).map(([n,c])=>`<div class="top-row"><span>${sanitizar(n)}</span><span>${c}</span></div>`).join(''):'<div class="top-row"><span>Sin ventas hoy</span></div>';
     });
   }
 
@@ -933,7 +949,7 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
     ventasHistorialActual=ventas;
     document.getElementById('histCantVentas').textContent=ventas.length;
     document.getElementById('histIngresos').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
-    document.getElementById('historialLista').innerHTML=ventas.length?ventas.map(v=>`<div class="top-row"><span>${v.fechaDia} — ${(v.items||[]).map(it=>it.nombre).join(', ').slice(0,40)}</span><span>$${v.total} (${v.metodoPago})</span></div>`).join(''):'<div class="top-row"><span>Sin ventas en este período</span></div>';
+    document.getElementById('historialLista').innerHTML=ventas.length?ventas.map(v=>`<div class="top-row"><span>${v.fechaDia} — ${sanitizar((v.items||[]).map(it=>it.nombre).join(', ').slice(0,40))}</span><span>$${v.total} (${sanitizar(v.metodoPago)})</span></div>`).join(''):'<div class="top-row"><span>Sin ventas en este período</span></div>';
   }
 
   document.getElementById('exportCSVBtn').addEventListener('click',async()=>{
@@ -979,7 +995,7 @@ button[class*="metodo"]:active, button[class*="pago"]:active {
   /* ════ GASTOS ════ */
   function hoyISO(){return new Date().toISOString().slice(0,10);}
   function cargarGastosHoy(){db.collection('gastos').where('fechaDia','==',hoyISO()).onSnapshot(snap=>{gastosHoy=snap.docs.map(d=>({id:d.id,...d.data()}));renderGastosLista();},e=>logError('gastos-snap',e));}
-  function renderGastosLista(){const cont=document.getElementById('gastosLista');if(!cont)return;if(!gastosHoy.length){cont.innerHTML='<p style="font-size:0.78rem;color:var(--muted);">Sin gastos registrados hoy.</p>';return;}cont.innerHTML=gastosHoy.map(g=>`<div class="carrito-item" style="margin-bottom:4px;"><div class="carrito-item-info">${g.descripcion}</div><div style="color:var(--tomate);font-weight:700;">-$${g.monto}</div><button style="background:none;border:none;color:var(--muted);cursor:pointer;" data-delgasto="${g.id}">✕</button></div>`).join('');cont.querySelectorAll('[data-delgasto]').forEach(b=>b.addEventListener('click',()=>{db.collection('gastos').doc(b.dataset.delgasto).delete().catch(e=>logError('del-gasto',e));}));}
+  function renderGastosLista(){const cont=document.getElementById('gastosLista');if(!cont)return;if(!gastosHoy.length){cont.innerHTML='<p style="font-size:0.78rem;color:var(--muted);">Sin gastos registrados hoy.</p>';return;}cont.innerHTML=gastosHoy.map(g=>`<div class="carrito-item" style="margin-bottom:4px;"><div class="carrito-item-info">${sanitizar(g.descripcion)}</div><div style="color:var(--tomate);font-weight:700;">-$${g.monto}</div><button style="background:none;border:none;color:var(--muted);cursor:pointer;" data-delgasto="${g.id}">✕</button></div>`).join('');cont.querySelectorAll('[data-delgasto]').forEach(b=>b.addEventListener('click',()=>{db.collection('gastos').doc(b.dataset.delgasto).delete().catch(e=>logError('del-gasto',e));}));}
   document.getElementById('btnAgregarGasto').addEventListener('click',()=>{document.getElementById('gastoDesc').value='';document.getElementById('gastoMonto').value='';document.getElementById('modalGasto').classList.add('active');setTimeout(()=>document.getElementById('gastoDesc').focus(),50);});
   document.getElementById('modalGastoCancel').addEventListener('click',()=>document.getElementById('modalGasto').classList.remove('active'));
   document.getElementById('modalGastoConfirm').addEventListener('click',()=>{const desc=document.getElementById('gastoDesc').value.trim();const monto=parseFloat(document.getElementById('gastoMonto').value)||0;if(!desc){toast('Ingresá una descripción');return;}if(monto<=0){toast('Ingresá un monto mayor a 0');return;}db.collection('gastos').add({descripcion:desc,monto,fechaDia:hoyISO(),ts:firebase.firestore.FieldValue.serverTimestamp()}).then(()=>{toast('Gasto registrado');document.getElementById('modalGasto').classList.remove('active');}).catch(e=>logError('add-gasto',e));});
@@ -1139,7 +1155,7 @@ function iniciarComandasListener() {
         const min = c.ts ? Math.floor((Date.now() - c.ts.toMillis()) / 60000) : 0;
         const urgente = min >= 15 ? 'urgente' : '';
         const items = (c.items || []).map(i =>
-          `<div class="comanda-item"><span class="comanda-cant">${i.cantidad}x</span><span>${i.nombre}</span></div>`
+          `<div class="comanda-item"><span class="comanda-cant">${i.cantidad}x</span><span>${sanitizar(i.nombre)}</span></div>`
         ).join('');
         return `<div class="comanda-card ${urgente}">
           <div class="comanda-header">
@@ -1147,7 +1163,7 @@ function iniciarComandasListener() {
             <span class="comanda-time">${min} min${min >= 15 ? ' ⚠️' : ''}</span>
           </div>
           <div class="comanda-items">${items}</div>
-          ${c.notas ? `<div style="font-size:0.75rem;color:#f59e0b;margin-bottom:8px">📝 ${c.notas}</div>` : ''}
+          ${c.notas ? `<div style="font-size:0.75rem;color:#f59e0b;margin-bottom:8px">📝 ${sanitizar(c.notas)}</div>` : ''}
           <button class="btn-listo" onclick="marcarListo('${d.id}')">✅ Listo — entregar</button>
         </div>`;
       }).join('');
