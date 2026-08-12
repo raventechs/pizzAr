@@ -3,8 +3,8 @@
 
 const CACHE_NAME = 'pizzar-v2.6';
 const SHELL = [
-  '/pizzAr/',
-  '/pizzAr/index.html',
+  '/',
+  '/index.html',
   'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap',
   'https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js',
@@ -32,7 +32,7 @@ self.addEventListener('fetch', e => {
           caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
         }
         return response;
-      }).catch(() => { if (e.request.mode === 'navigate') return caches.match('/pizzAr/index.html'); });
+      }).catch(() => { if (e.request.mode === 'navigate') return caches.match('/index.html'); });
     })
   );
 });
