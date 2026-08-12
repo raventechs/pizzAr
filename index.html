@@ -1077,7 +1077,7 @@ var __rtPWA = (function() {
   });
 
   /* P3 ROBUSTEZ — SERVICE WORKER */
-  if('serviceWorker' in navigator){navigator.serviceWorker.register('/pizzAr/sw-pizzar.js').catch(e=>logError('sw',e));}
+  if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw-pizzar.js').catch(e=>logError('sw',e));}
   chequearBackupDiario();
 
 // ══════════ BACKUP ESTÁNDAR PizzAR ══════════
