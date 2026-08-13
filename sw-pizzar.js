@@ -1,7 +1,7 @@
 // sw-pizzar.js — Service Worker PizzAR v2.6
 // P3 ROBUSTEZ: cachea shell para uso offline completo
 
-const CACHE_NAME = 'pizzar-v2.6';
+const CACHE_NAME = 'pizzar-v2.7';
 const SHELL = [
   '/',
   '/index.html',
@@ -24,6 +24,17 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (url.hostname.includes('firestore.googleapis.com') || url.hostname.includes('identitytoolkit.googleapis.com') || url.hostname.includes('securetoken.googleapis.com')) return;
+
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).then(response => {
+        caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
+        return response;
+      }).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
@@ -32,7 +43,7 @@ self.addEventListener('fetch', e => {
           caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
         }
         return response;
-      }).catch(() => { if (e.request.mode === 'navigate') return caches.match('/index.html'); });
+      }).catch(() => {});
     })
   );
 });
