@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.7
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v2.8
+  v2.8: DATOS SEPARADOS POR NEGOCIO (negocios/{uid}/…). El cajero entra con el link del dueño (Configuración → Acceso Punto de Venta) + PIN, validado por reglas de Firestore. Requiere publicar firestore.rules.
   Fecha: 2026-10-17
   v2.7: MODO PRÁCTICA (Configuración → 🎓): carga catálogo con precios actuales (muzzarella grande $13.000), 14 días de ventas y gastos marcados _demo; botón para quitarlos sin tocar datos reales.
   Cambios respecto a v2.6 (2026-07-04):
@@ -508,6 +509,11 @@ var __rtPWA = (function() {
         <h4>Acceso Punto de Venta</h4>
         <input type="text" id="cfgPinCajero" inputmode="numeric" maxlength="6" placeholder="Ej: 2468">
         <button class="btn-tomate" style="margin-top:10px;" id="guardarPinCajeroBtn">Guardar PIN</button>
+        <div style="margin-top:14px;">
+          <p style="font-size:0.78rem;color:var(--muted);margin-bottom:6px;">Link de acceso del cajero: abrilo una vez en el celular/PC del cajero, después entra con el PIN.</p>
+          <input type="text" id="cfgLinkCajero" readonly onclick="this.select()">
+          <button class="btn-tomate" style="margin-top:8px;" id="copiarLinkCajeroBtn">Copiar link</button>
+        </div>
       </div>
       <div class="config-section">
         <h4>🎓 Modo Práctica</h4>
@@ -662,6 +668,37 @@ var __rtPWA = (function() {
   const auth = firebase.auth();
   const db = firebase.firestore();
 
+  /* ══ AISLAMIENTO POR NEGOCIO (v2.8/1.6): todos los datos viven en negocios/{uid}/… ══ */
+  let OWNER = null;
+  function col(n){ if(!OWNER) throw new Error('Sin negocio activo'); return db.collection('negocios').doc(OWNER).collection(n); }
+  try{ const q=new URLSearchParams(location.search).get('n'); if(q && /^[A-Za-z0-9]{10,40}$/.test(q)) localStorage.setItem('rt_negocio',q); }catch(_){}
+  async function resolverNegocio(user){
+    try{
+      if(!user.isAnonymous){
+        OWNER = user.uid;
+        const r = col('configuracion').doc('general');
+        const s = await r.get();
+        if(!s.exists || !s.data().pinCajero){ await r.set({pinCajero:String(1000+Math.floor(Math.random()*9000))},{merge:true}); }
+        const el=document.getElementById('cfgLinkCajero'); if(el) el.value = location.origin+location.pathname+'?n='+OWNER;
+        return true;
+      }
+      let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
+      if(!n) throw new Error('sin negocio');
+      OWNER = n;
+      const ref = db.collection('negocios').doc(n).collection('cajeros').doc(user.uid);
+      if(window._pinPend){ const p=window._pinPend; window._pinPend=null; await ref.set({pin:p, ts:firebase.firestore.FieldValue.serverTimestamp()}); return true; }
+      const s2 = await ref.get(); if(!s2.exists) throw new Error('sin permiso');
+      return true;
+    }catch(e){
+      OWNER = null;
+      const msg = user.isAnonymous ? 'PIN incorrecto o link de cajero inválido' : 'No se pudo abrir tu negocio: '+e.message;
+      try{ document.getElementById('loginError').textContent = msg; }catch(_){}
+      try{ await auth.signOut(); }catch(_){}
+      return false;
+    }
+  }
+
+
   function logError(origen, mensaje, extra) {
     try { db.collection('errores').add({ app:'PizzAR', origen, mensaje:String(mensaje), extra:extra?String(extra):null, uid:auth.currentUser?auth.currentUser.uid:'anonimo', ts:firebase.firestore.FieldValue.serverTimestamp() }); } catch(_) {}
   }
@@ -720,9 +757,9 @@ var __rtPWA = (function() {
     if(!idb||!estaOnline) return;
     try{
       const ventas=await idbGetAll('ventas_pendientes');
-      for(const v of ventas){const{id,...data}=v;await db.collection('ventas').add({...data,ts:firebase.firestore.FieldValue.serverTimestamp()});await idbDelete('ventas_pendientes',id);}
+      for(const v of ventas){const{id,...data}=v;await col('ventas').add({...data,ts:firebase.firestore.FieldValue.serverTimestamp()});await idbDelete('ventas_pendientes',id);}
       const cierres=await idbGetAll('cierres_pendientes');
-      for(const c of cierres){const{id,...data}=c;await db.collection('cierres').add({...data,ts:firebase.firestore.FieldValue.serverTimestamp()});await idbDelete('cierres_pendientes',id);}
+      for(const c of cierres){const{id,...data}=c;await col('cierres').add({...data,ts:firebase.firestore.FieldValue.serverTimestamp()});await idbDelete('cierres_pendientes',id);}
       await actualizarBadge();
       if(ventas.length+cierres.length>0) toast(`✅ ${ventas.length+cierres.length} registros sincronizados`,'ok');
     }catch(e){logError('sync',e.message);}
@@ -738,6 +775,7 @@ var __rtPWA = (function() {
   auth.onAuthStateChanged(async user=>{
     document.getElementById('loadingScreen').classList.add('hide');
     if(user){
+      if(!(await resolverNegocio(user))) return;
       await abrirIDB();
       rolActual=user.isAnonymous?'cajero':'dueño';
       document.getElementById('loginScreen').classList.remove('active');
@@ -757,9 +795,26 @@ var __rtPWA = (function() {
   document.getElementById('loginBtn').addEventListener('click',()=>{auth.signInWithEmailAndPassword(document.getElementById('loginEmail').value.trim(),document.getElementById('loginPass').value).catch(()=>{document.getElementById('loginError').textContent='Email o contraseña incorrectos';});});
   document.getElementById('logoutBtn').addEventListener('click',()=>auth.signOut());
   document.getElementById('loginGoogleBtn').addEventListener('click',()=>{auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(()=>{document.getElementById('loginError').textContent='No se pudo iniciar sesión con Google';});});
-  document.getElementById('loginCajeroBtn').addEventListener('click',()=>{db.collection('configuracion').doc('general').get().then(doc=>{pinCajeroActual=(doc.exists&&doc.data().pinCajero)?doc.data().pinCajero:'2468';document.getElementById('pinCajeroInput').value='';document.getElementById('pinCajeroError').textContent='';document.getElementById('modalPinCajero').classList.add('active');setTimeout(()=>document.getElementById('pinCajeroInput').focus(),50);});});
+  document.getElementById('loginCajeroBtn').addEventListener('click',()=>{
+    let n=null; try{ n=localStorage.getItem('rt_negocio'); }catch(_){}
+    if(!n){ document.getElementById('loginError').textContent='Pedile al dueño el link de acceso de cajero (Configuración → Acceso Punto de Venta).'; return; }
+    document.getElementById('loginError').textContent='';
+    document.getElementById('pinCajeroInput').value=''; document.getElementById('pinCajeroError').textContent='';
+    document.getElementById('modalPinCajero').classList.add('active');
+    setTimeout(()=>document.getElementById('pinCajeroInput').focus(),50);
+  });
   document.getElementById('pinCajeroCancelBtn').addEventListener('click',()=>document.getElementById('modalPinCajero').classList.remove('active'));
-  document.getElementById('pinCajeroConfirmBtn').addEventListener('click',()=>{if(document.getElementById('pinCajeroInput').value===pinCajeroActual){document.getElementById('modalPinCajero').classList.remove('active');auth.signInAnonymously().catch(()=>{document.getElementById('pinCajeroError').textContent='No se pudo ingresar';});}else{document.getElementById('pinCajeroError').textContent='PIN incorrecto';}});
+  document.getElementById('pinCajeroConfirmBtn').addEventListener('click',()=>{
+    const pin=document.getElementById('pinCajeroInput').value.trim();
+    if(pin.length<4){ document.getElementById('pinCajeroError').textContent='PIN incorrecto'; return; }
+    window._pinPend=pin;
+    document.getElementById('modalPinCajero').classList.remove('active');
+    auth.signInAnonymously().catch(()=>{ window._pinPend=null; document.getElementById('loginError').textContent='No se pudo ingresar'; });
+  });
+  document.getElementById('copiarLinkCajeroBtn').addEventListener('click',()=>{
+    const el=document.getElementById('cfgLinkCajero'); el.select();
+    (navigator.clipboard?navigator.clipboard.writeText(el.value):Promise.reject()).then(()=>toast('Link copiado'),()=>{ try{document.execCommand('copy');toast('Link copiado');}catch(_){toast('Copialo a mano');} });
+  });
   document.getElementById('pinCajeroInput').addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('pinCajeroConfirmBtn').click();});
   document.getElementById('darkToggleBtn').addEventListener('click',()=>{document.body.classList.toggle('light');document.getElementById('darkToggleBtn').textContent=document.body.classList.contains('light')?'☀️':'🌙';});
 
@@ -768,7 +823,7 @@ var __rtPWA = (function() {
   /* ════ PRODUCTOS ════ */
   function cargarProductos(){
     if(!estaOnline){idbGetCatalogo().then(prods=>{if(prods.length>0){productos=prods;renderCatFilters();renderProductosGrid();renderProductosLista();}});return;}
-    db.collection('productos').onSnapshot(snap=>{
+    col('productos').onSnapshot(snap=>{
       productos=snap.docs.map(d=>({id:d.id,...d.data()}));
       if(!productos.length) precargarMenuEjemplo();
       if(idb) idbCacheCatalogo(productos);
@@ -789,7 +844,7 @@ var __rtPWA = (function() {
     simp('Pan de ajo chico','🍞','Extras',1800),simp('Pan de ajo grande','🍞','Extras',2800),simp('Flan casero','🍮','Postres',2000),simp('Helado 1/4kg','🍨','Postres',2500),
     ].map(p=>opts?_escalarProd(p,opts.factor):p);
     if(opts&&opts.devolver)return _lista;
-    _lista.forEach(p=>db.collection('productos').add(p));
+    _lista.forEach(p=>col('productos').add(p));
   }
 
   const GRUPOS_MAP={'Pizzas':'Pizzas','Empanadas':'Empanadas','Minutas':'Minutas','Gaseosas':'Bebidas','Cervezas':'Bebidas','Aguas':'Bebidas','Extras':'Extras','Postres':'Postres'};
@@ -855,7 +910,7 @@ var __rtPWA = (function() {
     const itemsVendidos=carrito.slice();
     const ventaData={items:carrito,total,metodoPago,fecha:new Date().toISOString(),fechaDia:new Date().toISOString().slice(0,10)};
     if(estaOnline){
-      try{await db.collection('ventas').add({...ventaData,ts:firebase.firestore.FieldValue.serverTimestamp()});descontarStockPorVenta(itemsVendidos);toast('Venta registrada — $'+total);}
+      try{await col('ventas').add({...ventaData,ts:firebase.firestore.FieldValue.serverTimestamp()});descontarStockPorVenta(itemsVendidos);toast('Venta registrada — $'+total);}
       catch(e){logError('cobrar',e.message);toast('Error al guardar. Reintentá.');return;}
     }else{
       await idbAdd('ventas_pendientes',ventaData);await actualizarBadge();toast('📴 Venta guardada offline — se sincronizará al reconectar');
@@ -867,7 +922,7 @@ var __rtPWA = (function() {
   function renderProductosLista(){
     document.getElementById('productosLista').innerHTML=productos.map(p=>`<div class="producto-row"><div><div class="producto-row-name">${p.emoji||'🍕'} ${p.nombre}</div><div class="producto-row-meta">${p.categoria} — ${p.activo?'Activo':'Inactivo'}</div></div><div class="row-actions"><button data-edit="${p.id}">✏️</button><button data-del="${p.id}">🗑️</button></div></div>`).join('');
     document.querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>abrirModalProducto(b.dataset.edit)));
-    document.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este producto?'))db.collection('productos').doc(b.dataset.del).delete().then(()=>toast('Producto eliminado'));}));
+    document.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este producto?'))col('productos').doc(b.dataset.del).delete().then(()=>toast('Producto eliminado'));}));
   }
 
   document.getElementById('nuevoProductoBtn').addEventListener('click',()=>abrirModalProducto(null));
@@ -917,7 +972,7 @@ var __rtPWA = (function() {
     tamanosEditando.forEach(t=>{if(!t.nombre)return;precios[t.nombre]=t.precio;const rl=(t.receta||[]).filter(r=>r.insumoId&&r.cantidad>0);if(rl.length)recetaPorTamano[t.nombre]=rl;});
     const data={nombre:document.getElementById('prodNombre').value.trim(),categoria:document.getElementById('prodCategoria').value,emoji:document.getElementById('prodEmoji').value.trim(),precios,recetaPorTamano,receta:firebase.firestore.FieldValue.delete(),activo:document.getElementById('prodActivo').checked};
     if(!data.nombre){toast('Falta el nombre');return;}if(!Object.keys(precios).length){toast('Agregá al menos un tamaño');return;}
-    const ref=editandoProductoId?db.collection('productos').doc(editandoProductoId):db.collection('productos').doc();
+    const ref=editandoProductoId?col('productos').doc(editandoProductoId):col('productos').doc();
     ref.set(data,{merge:true}).then(()=>{toast('Producto guardado');document.getElementById('modalProducto').classList.remove('active');});
   });
 
@@ -927,7 +982,7 @@ var __rtPWA = (function() {
     Object.values(grupos).forEach(lista=>{if(lista.length<=1)return;gCount++;lista.sort((a,b)=>cr(b)-cr(a));lista.slice(1).forEach(p=>aBorrar.push(p.id));});
     if(!aBorrar.length){toast('No se encontraron duplicados');return;}
     if(!confirm(`Se eliminan ${aBorrar.length} duplicados (${gCount} grupos). ¿Continuar?`))return;
-    const batch=db.batch();aBorrar.forEach(id=>batch.delete(db.collection('productos').doc(id)));batch.commit().then(()=>toast(`${aBorrar.length} duplicados eliminados`));
+    const batch=db.batch();aBorrar.forEach(id=>batch.delete(col('productos').doc(id)));batch.commit().then(()=>toast(`${aBorrar.length} duplicados eliminados`));
   });
 
   
@@ -947,16 +1002,15 @@ var __rtPWA = (function() {
   }
   async function cargarPractica() {
     if (!confirm('Se carga una pizzería de práctica: catálogo (si no tenés productos), ventas de 14 días y gastos de mentira. Se pueden quitar después. ¿Seguir?')) return;
-    if (!confirm('ATENCIÓN: esta app guarda todos los datos en un mismo lugar. Si hay otros clientes reales usando este mismo sistema, también van a ver los datos de práctica. Usalo solo en tu cuenta de pruebas. ¿Seguro?')) return;
     try {
-      const ya = await db.collection('ventas').where('_demo', '==', true).limit(1).get();
+      const ya = await col('ventas').where('_demo', '==', true).limit(1).get();
       if (!ya.empty) { toast('Ya hay una práctica cargada. Quitala primero.'); return; }
       toast('Cargando práctica…');
       const ops = [], f = 13000/8500;
       const lista = precargarMenuEjemplo({ factor: f, devolver: true });
       let base = productos.length ? productos : null;
       if (!base) {
-        base = lista.map(p => { const r = db.collection('productos').doc(); ops.push([r, Object.assign({}, p, { _demo: true })]); return Object.assign({ id: r.id }, p); });
+        base = lista.map(p => { const r = col('productos').doc(); ops.push([r, Object.assign({}, p, { _demo: true })]); return Object.assign({ id: r.id }, p); });
       }
       const hoy = new Date();
       for (let d = 0; d < 14; d++) {
@@ -970,12 +1024,12 @@ var __rtPWA = (function() {
           }
           const total = items.reduce((s, it) => s + it.precio * it.cantidad, 0), r = Math.random();
           const f2 = new Date(dia); f2.setHours(_rnd(9, 22), _rnd(0, 59), _rnd(0, 59));
-          ops.push([db.collection('ventas').doc(), { items, total, metodoPago: r < 0.5 ? 'efectivo' : (r < 0.8 ? 'transferencia' : 'debito'), fecha: f2.toISOString(), fechaDia: f2.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f2), _demo: true }]);
+          ops.push([col('ventas').doc(), { items, total, metodoPago: r < 0.5 ? 'efectivo' : (r < 0.8 ? 'transferencia' : 'debito'), fecha: f2.toISOString(), fechaDia: f2.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f2), _demo: true }]);
         }
       }
       [['Harina, muzzarella y salsa',180000,0],['Bebidas (proveedor)',95000,1],['Nafta de delivery',60000,2],['Gas',45000,3],['Luz',55000,5]].forEach(function (g) {
         const f3 = new Date(hoy); f3.setDate(hoy.getDate() - g[2]);
-        ops.push([db.collection('gastos').doc(), { descripcion: g[0], monto: g[1], fechaDia: f3.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f3), _demo: true }]);
+        ops.push([col('gastos').doc(), { descripcion: g[0], monto: g[1], fechaDia: f3.toISOString().slice(0, 10), ts: firebase.firestore.Timestamp.fromDate(f3), _demo: true }]);
       });
       await _commitOps(ops);
       toast('✅ Práctica cargada: mirá Reportes e Historial');
@@ -987,7 +1041,7 @@ var __rtPWA = (function() {
       toast('Quitando práctica…');
       const ops = [];
       for (const c of ['ventas', 'gastos', 'productos']) {
-        const s = await db.collection(c).where('_demo', '==', true).get();
+        const s = await col(c).where('_demo', '==', true).get();
         s.forEach(d => ops.push([d.ref, null]));
       }
       await _commitOps(ops);
@@ -1000,15 +1054,15 @@ var __rtPWA = (function() {
   document.getElementById('restablecerCatalogoBtn').addEventListener('click',()=>{
     if(!confirm('Esto va a BORRAR todos los productos actuales. ¿Seguro?'))return;
     if(!confirm('Confirmá: se borran todos y se carga el catálogo de ejemplo. ¿Continuar?'))return;
-    db.collection('productos').get().then(snap=>{const b=db.batch();snap.docs.forEach(doc=>b.delete(doc.ref));return b.commit();}).then(()=>{precargarMenuEjemplo();toast('Catálogo restablecido');});
+    col('productos').get().then(snap=>{const b=db.batch();snap.docs.forEach(doc=>b.delete(doc.ref));return b.commit();}).then(()=>{precargarMenuEjemplo();toast('Catálogo restablecido');});
   });
 
   /* ════ STOCK ════ */
-  function cargarInsumos(){db.collection('insumos').onSnapshot(snap=>{insumos=snap.docs.map(d=>({id:d.id,...d.data()}));renderInsumosLista();});}
+  function cargarInsumos(){col('insumos').onSnapshot(snap=>{insumos=snap.docs.map(d=>({id:d.id,...d.data()}));renderInsumosLista();});}
 
   function listaInsumosBasicos(){const i=(n,u,sa,sm)=>({nombre:n,unidad:u,stockActual:sa,stockMinimo:sm});return[i('Harina','kg',25,5),i('Mozzarella','kg',15,3),i('Salsa de tomate','kg',10,2),i('Aceite','L',8,2),i('Levadura','kg',1,0.2),i('Sal','kg',5,1),i('Jamón','kg',5,1),i('Morrones','kg',3,0.5),i('Aceitunas','kg',2,0.5),i('Huevo','unidad',60,12),i('Carne picada','kg',10,2),i('Pollo','kg',8,2),i('Coca-Cola 500ml','unidad',24,6),i('Coca-Cola 1.5L','unidad',12,3),i('Agua sin gas 500ml','unidad',24,6),i('Cerveza Quilmes lata','unidad',24,6)];}
 
-  document.getElementById('cargarBasicosBtn').addEventListener('click',()=>{const ex=new Set(insumos.map(i=>i.nombre.trim().toLowerCase()));const falt=listaInsumosBasicos().filter(b=>!ex.has(b.nombre.trim().toLowerCase()));if(!falt.length){toast('Ya tenés todos los insumos básicos');return;}falt.forEach(i=>db.collection('insumos').add(i));toast(`Se agregaron ${falt.length} insumos básicos`);});
+  document.getElementById('cargarBasicosBtn').addEventListener('click',()=>{const ex=new Set(insumos.map(i=>i.nombre.trim().toLowerCase()));const falt=listaInsumosBasicos().filter(b=>!ex.has(b.nombre.trim().toLowerCase()));if(!falt.length){toast('Ya tenés todos los insumos básicos');return;}falt.forEach(i=>col('insumos').add(i));toast(`Se agregaron ${falt.length} insumos básicos`);});
 
   function renderInsumosLista(){
     const dl=document.getElementById('insumosDatalist');if(dl)dl.innerHTML=insumos.map(i=>`<option value="${i.nombre}"></option>`).join('');
@@ -1016,26 +1070,26 @@ var __rtPWA = (function() {
     if(!insumos.length){cont.innerHTML='<p style="color:var(--muted);font-size:0.85rem;">Todavía no cargaste insumos.</p>';return;}
     cont.innerHTML=insumos.map(ins=>{const bajo=ins.stockActual<=ins.stockMinimo;return`<div class="producto-row"><div><div class="producto-row-name">${bajo?'⚠️ ':''}${ins.nombre}</div><div class="producto-row-meta" style="${bajo?'color:var(--tomate);font-weight:600;':''}">Stock: ${ins.stockActual} ${ins.unidad} (mínimo ${ins.stockMinimo})</div></div><div class="row-actions"><button data-editins="${ins.id}">✏️</button><button data-delins="${ins.id}">🗑️</button></div></div>`;}).join('');
     cont.querySelectorAll('[data-editins]').forEach(b=>b.addEventListener('click',()=>abrirModalInsumo(b.dataset.editins)));
-    cont.querySelectorAll('[data-delins]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este insumo?'))db.collection('insumos').doc(b.dataset.delins).delete().then(()=>toast('Insumo eliminado'));}));
+    cont.querySelectorAll('[data-delins]').forEach(b=>b.addEventListener('click',()=>{if(confirm('¿Eliminar este insumo?'))col('insumos').doc(b.dataset.delins).delete().then(()=>toast('Insumo eliminado'));}));
   }
 
   document.getElementById('nuevoInsumoBtn').addEventListener('click',()=>abrirModalInsumo(null));
   function abrirModalInsumo(id){editandoInsumoId=id;const ins=id?insumos.find(x=>x.id===id):null;document.getElementById('modalInsumoTitulo').textContent=id?'Editar insumo':'Nuevo insumo';document.getElementById('insNombre').value=ins?ins.nombre:'';document.getElementById('insUnidad').value=ins?ins.unidad:'kg';document.getElementById('insStockActual').value=ins?ins.stockActual:0;document.getElementById('insStockMinimo').value=ins?ins.stockMinimo:0;document.getElementById('modalInsumo').classList.add('active');}
   document.getElementById('modalInsumoCancel').addEventListener('click',()=>document.getElementById('modalInsumo').classList.remove('active'));
-  document.getElementById('modalInsumoConfirm').addEventListener('click',()=>{const data={nombre:document.getElementById('insNombre').value.trim(),unidad:document.getElementById('insUnidad').value,stockActual:parseFloat(document.getElementById('insStockActual').value)||0,stockMinimo:parseFloat(document.getElementById('insStockMinimo').value)||0};if(!data.nombre){toast('Falta el nombre');return;}const ref=editandoInsumoId?db.collection('insumos').doc(editandoInsumoId):db.collection('insumos').doc();ref.set(data,{merge:true}).then(()=>{toast('Insumo guardado');document.getElementById('modalInsumo').classList.remove('active');});});
+  document.getElementById('modalInsumoConfirm').addEventListener('click',()=>{const data={nombre:document.getElementById('insNombre').value.trim(),unidad:document.getElementById('insUnidad').value,stockActual:parseFloat(document.getElementById('insStockActual').value)||0,stockMinimo:parseFloat(document.getElementById('insStockMinimo').value)||0};if(!data.nombre){toast('Falta el nombre');return;}const ref=editandoInsumoId?col('insumos').doc(editandoInsumoId):col('insumos').doc();ref.set(data,{merge:true}).then(()=>{toast('Insumo guardado');document.getElementById('modalInsumo').classList.remove('active');});});
 
   function descontarStockPorVenta(items){
     if(!insumos.length)return;const desc={};
     items.forEach(item=>{const prod=productos.find(p=>p.id===item.productoId);if(!prod)return;let receta=(prod.recetaPorTamano&&prod.recetaPorTamano[item.tamano])||[];if(!receta.length&&prod.receta)receta=prod.receta;if(!receta.length)return;receta.forEach(r=>{desc[r.insumoId]=(desc[r.insumoId]||0)+(r.cantidad*item.cantidad);});});
     const ids=Object.keys(desc);if(!ids.length)return;
-    const batch=db.batch();ids.forEach(id=>batch.update(db.collection('insumos').doc(id),{stockActual:firebase.firestore.FieldValue.increment(-desc[id])}));
+    const batch=db.batch();ids.forEach(id=>batch.update(col('insumos').doc(id),{stockActual:firebase.firestore.FieldValue.increment(-desc[id])}));
     batch.commit().catch(e=>logError('descuentoStock',e));
   }
 
   /* ════ REPORTES ════ */
   function escucharVentasHoy(){
     const hoy=new Date().toISOString().slice(0,10);
-    db.collection('ventas').where('fechaDia','==',hoy).onSnapshot(snap=>{
+    col('ventas').where('fechaDia','==',hoy).onSnapshot(snap=>{
       const ventas=snap.docs.map(d=>d.data());
       document.getElementById('repPedidosDia').textContent=ventas.length;
       document.getElementById('repIngresosDia').textContent='$'+ventas.reduce((s,v)=>s+(v.total||0),0);
@@ -1055,7 +1109,7 @@ var __rtPWA = (function() {
     else if(preset==='semana'){const i=new Date(hoy);i.setDate(hoy.getDate()-6);desde=fechaISO(i);hasta=fechaISO(hoy);}
     else{desde=document.getElementById('historialDesde').value;hasta=document.getElementById('historialHasta').value;if(!desde||!hasta){toast('Elegí ambas fechas');return;}}
     let ventas=[];
-    if(estaOnline){const snap=await db.collection('ventas').where('fechaDia','>=',desde).where('fechaDia','<=',hasta).get();ventas=snap.docs.map(d=>d.data()).sort((a,b)=>(b.fechaDia||'').localeCompare(a.fechaDia||''));}
+    if(estaOnline){const snap=await col('ventas').where('fechaDia','>=',desde).where('fechaDia','<=',hasta).get();ventas=snap.docs.map(d=>d.data()).sort((a,b)=>(b.fechaDia||'').localeCompare(a.fechaDia||''));}
     else{const pend=await idbGetAll('ventas_pendientes');ventas=pend.filter(v=>v.fechaDia>=desde&&v.fechaDia<=hasta).sort((a,b)=>(b.fechaDia||'').localeCompare(a.fechaDia||''));toast('📴 Mostrando ventas offline del período');}
     ventasHistorialActual=ventas;
     document.getElementById('histCantVentas').textContent=ventas.length;
@@ -1065,7 +1119,7 @@ var __rtPWA = (function() {
 
   document.getElementById('exportCSVBtn').addEventListener('click',async()=>{
     let ventas=ventasHistorialActual;
-    if(!ventas.length){if(estaOnline){const snap=await db.collection('ventas').where('fechaDia','==',fechaISO(new Date())).get();ventas=snap.docs.map(d=>d.data());}else{ventas=await idbGetAll('ventas_pendientes');}}
+    if(!ventas.length){if(estaOnline){const snap=await col('ventas').where('fechaDia','==',fechaISO(new Date())).get();ventas=snap.docs.map(d=>d.data());}else{ventas=await idbGetAll('ventas_pendientes');}}
     if(!ventas.length){toast('No hay ventas para exportar');return;}
     const filas=[['Fecha','Método de pago','Total','Productos']];
     ventas.forEach(v=>{const prods=(v.items||[]).map(it=>`${it.nombre} (${it.tamano}) x${it.cantidad}`).join(' | ');filas.push([v.fechaDia||'',v.metodoPago||'',v.total||0,prods]);});
@@ -1079,7 +1133,7 @@ var __rtPWA = (function() {
 
   /* ════ CONFIGURACIÓN ════ */
   function cargarConfiguracion(){
-    db.collection('configuracion').doc('general').get().then(doc=>{
+    col('configuracion').doc('general').get().then(doc=>{
       const c=doc.exists?doc.data():{};
       document.getElementById('cfgNombre').value=c.nombre||'';document.getElementById('cfgHorario').value=c.horario||'';
       document.getElementById('cfgPinCajero').value=c.pinCajero||'2468';document.getElementById('cfgWhatsapp').value=c.whatsapp||'';
@@ -1089,9 +1143,9 @@ var __rtPWA = (function() {
       renderPlusStatus();
     });
   }
-  document.getElementById('guardarCfgBtn').addEventListener('click',()=>{db.collection('configuracion').doc('general').set({nombre:document.getElementById('cfgNombre').value.trim(),horario:document.getElementById('cfgHorario').value.trim()},{merge:true}).then(()=>toast('Configuración guardada'));});
-  document.getElementById('guardarPinCajeroBtn').addEventListener('click',()=>{const pin=document.getElementById('cfgPinCajero').value.trim();if(!pin||pin.length<4){toast('El PIN debe tener al menos 4 dígitos');return;}db.collection('configuracion').doc('general').set({pinCajero:pin},{merge:true}).then(()=>{pinCajeroActual=pin;toast('PIN actualizado');});});
-  document.getElementById('guardarWhatsappBtn').addEventListener('click',()=>{const num=document.getElementById('cfgWhatsapp').value.trim().replace(/\D/g,'');if(!num||num.length<10){toast('Número inválido');return;}db.collection('configuracion').doc('general').set({whatsapp:num},{merge:true}).then(()=>{whatsappNumero=num;toast('Número guardado');});});
+  document.getElementById('guardarCfgBtn').addEventListener('click',()=>{col('configuracion').doc('general').set({nombre:document.getElementById('cfgNombre').value.trim(),horario:document.getElementById('cfgHorario').value.trim()},{merge:true}).then(()=>toast('Configuración guardada'));});
+  document.getElementById('guardarPinCajeroBtn').addEventListener('click',()=>{const pin=document.getElementById('cfgPinCajero').value.trim();if(!pin||pin.length<4){toast('El PIN debe tener al menos 4 dígitos');return;}col('configuracion').doc('general').set({pinCajero:pin},{merge:true}).then(()=>{pinCajeroActual=pin;toast('PIN actualizado');});});
+  document.getElementById('guardarWhatsappBtn').addEventListener('click',()=>{const num=document.getElementById('cfgWhatsapp').value.trim().replace(/\D/g,'');if(!num||num.length<10){toast('Número inválido');return;}col('configuracion').doc('general').set({whatsapp:num},{merge:true}).then(()=>{whatsappNumero=num;toast('Número guardado');});});
 
   function renderPlusStatus(){document.querySelectorAll('.plus-status').forEach(el=>{el.textContent=featuresActuales[el.dataset.flag]?'✅':'🔒';});aplicarTabsPlus();}
   function aplicarTabsPlus(){
@@ -1105,17 +1159,17 @@ var __rtPWA = (function() {
 
   /* ════ GASTOS ════ */
   function hoyISO(){return new Date().toISOString().slice(0,10);}
-  function cargarGastosHoy(){db.collection('gastos').where('fechaDia','==',hoyISO()).onSnapshot(snap=>{gastosHoy=snap.docs.map(d=>({id:d.id,...d.data()}));renderGastosLista();},e=>logError('gastos-snap',e));}
-  function renderGastosLista(){const cont=document.getElementById('gastosLista');if(!cont)return;if(!gastosHoy.length){cont.innerHTML='<p style="font-size:0.78rem;color:var(--muted);">Sin gastos registrados hoy.</p>';return;}cont.innerHTML=gastosHoy.map(g=>`<div class="carrito-item" style="margin-bottom:4px;"><div class="carrito-item-info">${g.descripcion}</div><div style="color:var(--tomate);font-weight:700;">-$${g.monto}</div><button style="background:none;border:none;color:var(--muted);cursor:pointer;" data-delgasto="${g.id}">✕</button></div>`).join('');cont.querySelectorAll('[data-delgasto]').forEach(b=>b.addEventListener('click',()=>{db.collection('gastos').doc(b.dataset.delgasto).delete().catch(e=>logError('del-gasto',e));}));}
+  function cargarGastosHoy(){col('gastos').where('fechaDia','==',hoyISO()).onSnapshot(snap=>{gastosHoy=snap.docs.map(d=>({id:d.id,...d.data()}));renderGastosLista();},e=>logError('gastos-snap',e));}
+  function renderGastosLista(){const cont=document.getElementById('gastosLista');if(!cont)return;if(!gastosHoy.length){cont.innerHTML='<p style="font-size:0.78rem;color:var(--muted);">Sin gastos registrados hoy.</p>';return;}cont.innerHTML=gastosHoy.map(g=>`<div class="carrito-item" style="margin-bottom:4px;"><div class="carrito-item-info">${g.descripcion}</div><div style="color:var(--tomate);font-weight:700;">-$${g.monto}</div><button style="background:none;border:none;color:var(--muted);cursor:pointer;" data-delgasto="${g.id}">✕</button></div>`).join('');cont.querySelectorAll('[data-delgasto]').forEach(b=>b.addEventListener('click',()=>{col('gastos').doc(b.dataset.delgasto).delete().catch(e=>logError('del-gasto',e));}));}
   document.getElementById('btnAgregarGasto').addEventListener('click',()=>{document.getElementById('gastoDesc').value='';document.getElementById('gastoMonto').value='';document.getElementById('modalGasto').classList.add('active');setTimeout(()=>document.getElementById('gastoDesc').focus(),50);});
   document.getElementById('modalGastoCancel').addEventListener('click',()=>document.getElementById('modalGasto').classList.remove('active'));
-  document.getElementById('modalGastoConfirm').addEventListener('click',()=>{const desc=document.getElementById('gastoDesc').value.trim();const monto=parseFloat(document.getElementById('gastoMonto').value)||0;if(!desc){toast('Ingresá una descripción');return;}if(monto<=0){toast('Ingresá un monto mayor a 0');return;}db.collection('gastos').add({descripcion:desc,monto,fechaDia:hoyISO(),ts:firebase.firestore.FieldValue.serverTimestamp()}).then(()=>{toast('Gasto registrado');document.getElementById('modalGasto').classList.remove('active');}).catch(e=>logError('add-gasto',e));});
+  document.getElementById('modalGastoConfirm').addEventListener('click',()=>{const desc=document.getElementById('gastoDesc').value.trim();const monto=parseFloat(document.getElementById('gastoMonto').value)||0;if(!desc){toast('Ingresá una descripción');return;}if(monto<=0){toast('Ingresá un monto mayor a 0');return;}col('gastos').add({descripcion:desc,monto,fechaDia:hoyISO(),ts:firebase.firestore.FieldValue.serverTimestamp()}).then(()=>{toast('Gasto registrado');document.getElementById('modalGasto').classList.remove('active');}).catch(e=>logError('add-gasto',e));});
 
   /* ════ CIERRE DE CAJA ════ */
   document.getElementById('btnCerrarCaja').addEventListener('click',async()=>{
     if(!whatsappNumero){toast('Configurá el número de WhatsApp en Configuración','warn');return;}
     let ventasHoy=[];
-    if(estaOnline){try{const snap=await db.collection('ventas').where('fechaDia','==',hoyISO()).get();ventasHoy=snap.docs.map(d=>d.data());}catch(e){logError('cierre-ventas',e);}}
+    if(estaOnline){try{const snap=await col('ventas').where('fechaDia','==',hoyISO()).get();ventasHoy=snap.docs.map(d=>d.data());}catch(e){logError('cierre-ventas',e);}}
     else{const pend=await idbGetAll('ventas_pendientes');ventasHoy=pend.filter(v=>v.fechaDia===hoyISO());}
     let totalEfectivo=0,totalDebito=0,totalTransferencia=0,totalPizzas=0,totalEmpanadas=0;
     ventasHoy.forEach(v=>{const m=v.total||0;if(v.metodoPago==='efectivo')totalEfectivo+=m;else if(v.metodoPago==='debito')totalDebito+=m;else if(v.metodoPago==='transferencia')totalTransferencia+=m;(v.items||[]).forEach(it=>{const prod=productos.find(p=>p.id===it.productoId);if(!prod)return;if(prod.categoria==='Pizzas')totalPizzas+=it.cantidad;if(prod.categoria==='Empanadas'){const tam=(it.tamano||'').toLowerCase();if(tam.includes('docena')&&!tam.includes('media'))totalEmpanadas+=12*it.cantidad;else if(tam.includes('media'))totalEmpanadas+=6*it.cantidad;else totalEmpanadas+=it.cantidad;}});});
@@ -1136,7 +1190,7 @@ var __rtPWA = (function() {
     const modal=document.getElementById('modalCierre');
     const resumen=modal.dataset.resumen;
     const cierreData={fechaDia:hoyISO(),fechaISO:new Date().toISOString(),totalEfectivo:parseFloat(modal.dataset.totalEfectivo)||0,totalDebito:parseFloat(modal.dataset.totalDebito)||0,totalTransferencia:parseFloat(modal.dataset.totalTransferencia)||0,totalPizzas:parseInt(modal.dataset.totalPizzas)||0,totalEmpanadas:parseInt(modal.dataset.totalEmpanadas)||0,totalGastos:parseFloat(modal.dataset.totalGastos)||0};
-    if(estaOnline){try{await db.collection('cierres').add({...cierreData,ts:firebase.firestore.FieldValue.serverTimestamp()});}catch(e){logError('guardar-cierre',e);}}
+    if(estaOnline){try{await col('cierres').add({...cierreData,ts:firebase.firestore.FieldValue.serverTimestamp()});}catch(e){logError('guardar-cierre',e);}}
     else{await idbAdd('cierres_pendientes',cierreData);await actualizarBadge();toast('📴 Cierre guardado offline — se sincronizará al reconectar');}
     carrito=[];metodoPago='efectivo';document.querySelectorAll('.pago-chip').forEach(c=>c.classList.remove('active'));document.querySelector('.pago-chip[data-pago="efectivo"]').classList.add('active');renderCarrito();
     modal.classList.remove('active');
@@ -1159,7 +1213,7 @@ var __rtPWA = (function() {
   document.getElementById('modalFeaturesCancel').addEventListener('click',()=>document.getElementById('modalFeatures').classList.remove('active'));
   document.getElementById('modalFeaturesGuardar').addEventListener('click',()=>{
     const nuevas={pedidosOnlineHabilitado:document.getElementById('flagPedidos').checked,stockHabilitado:document.getElementById('flagStock').checked,empleadosHabilitado:document.getElementById('flagEmpleados').checked,gastosHabilitado:document.getElementById('flagGastos').checked,comandasHabilitado:document.getElementById('flagComandas').checked};
-    db.collection('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{featuresActuales=nuevas;renderPlusStatus();toast('Features actualizadas');document.getElementById('modalFeatures').classList.remove('active');});
+    col('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{featuresActuales=nuevas;renderPlusStatus();toast('Features actualizadas');document.getElementById('modalFeatures').classList.remove('active');});
   });
 
   /* P3 ROBUSTEZ — SERVICE WORKER */
@@ -1171,11 +1225,11 @@ async function generarBackup(silencioso) {
   var uid = auth.currentUser ? auth.currentUser.uid : null;
   if (!uid) return;
   try {
-    var ventasSnap = await db.collection('ventas').get().catch(function(){return {docs:[]}});
-    var productosSnap = await db.collection('productos').get().catch(function(){return {docs:[]}});
-    var insumosSnap = await db.collection('insumos').get().catch(function(){return {docs:[]}});
-    var cierresSnap = await db.collection('cierres').get().catch(function(){return {docs:[]}});
-    var configSnap = await db.collection('configuracion').doc('general').get().catch(function(){return {exists:false}});
+    var ventasSnap = await col('ventas').get().catch(function(){return {docs:[]}});
+    var productosSnap = await col('productos').get().catch(function(){return {docs:[]}});
+    var insumosSnap = await col('insumos').get().catch(function(){return {docs:[]}});
+    var cierresSnap = await col('cierres').get().catch(function(){return {docs:[]}});
+    var configSnap = await col('configuracion').doc('general').get().catch(function(){return {exists:false}});
     var fecha = new Date().toISOString().slice(0,10);
     var backup = {
       app:'PizzAR', version:'2.6', fecha:new Date().toISOString(), uid:uid,
@@ -1206,11 +1260,11 @@ async function restaurarBackup(input) {
     if (backup.app !== 'PizzAR') { toast('El archivo no es un backup de PizzAR'); return; }
     toast('Restaurando datos...');
     var batch = db.batch(); var count = 0;
-    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
-    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('productos').doc(id),d);});
-    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('insumos').doc(id),d);});
-    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(db.collection('cierres').doc(id),d);});
-    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(db.collection('configuracion').doc('general'),backup.configuracion,{merge:true});}
+    (backup.ventas||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('ventas').doc(id),d);if(++count%400===0){batch.commit();batch=db.batch();}});
+    (backup.productos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('productos').doc(id),d);});
+    (backup.insumos||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('insumos').doc(id),d);});
+    (backup.cierres||[]).forEach(function(v){var id=v._id;var d=Object.assign({},v);delete d._id;batch.set(col('cierres').doc(id),d);});
+    if(backup.configuracion&&Object.keys(backup.configuracion).length>0){batch.set(col('configuracion').doc('general'),backup.configuracion,{merge:true});}
     await batch.commit();
     toast('✅ Backup restaurado'); input.value='';
     setTimeout(function(){location.reload();},1500);
@@ -1232,7 +1286,7 @@ let contadorComanda = 1;
 function iniciarComandasListener() {
   if (comandasListener) return;
   // También escuchar cuando un pedido pasa a "listo" para notificar al cajero
-  db.collection('comandas')
+  col('comandas')
     .where('estado', '==', 'listo')
     .orderBy('listoEn', 'desc')
     .limit(1)
@@ -1252,7 +1306,7 @@ function iniciarComandasListener() {
       });
     });
 
-  comandasListener = db.collection('comandas')
+  comandasListener = col('comandas')
     .where('estado', '==', 'pendiente')
     .orderBy('ts', 'asc')
     .onSnapshot(snap => {
@@ -1282,7 +1336,7 @@ function iniciarComandasListener() {
 }
 
 function marcarListo(id) {
-  db.collection('comandas').doc(id).update({
+  col('comandas').doc(id).update({
     estado: 'listo',
     listoEn: firebase.firestore.FieldValue.serverTimestamp()
   }).catch(e => logError('marcarListo', e.message));
@@ -1298,7 +1352,7 @@ function enviarComanda(items, notas) {
     estado:  'pendiente',
     ts:      firebase.firestore.FieldValue.serverTimestamp()
   };
-  db.collection('comandas').add(comanda)
+  col('comandas').add(comanda)
     .then(() => {
       toast('Comanda enviada a cocina');
       if (featuresActuales.comandasHabilitado) imprimirComandaDirecta(comanda);
@@ -1331,7 +1385,7 @@ function imprimirComandaDirecta(comanda) {
 
 window.imprimirComanda = function() {
   // Reimprimir la última comanda pendiente
-  db.collection('comandas').where('estado','==','pendiente').orderBy('ts','desc').limit(1).get()
+  col('comandas').where('estado','==','pendiente').orderBy('ts','desc').limit(1).get()
     .then(snap => {
       if (snap.empty) { toast('Sin comandas pendientes'); return; }
       imprimirComandaDirecta(snap.docs[0].data());
@@ -1347,7 +1401,7 @@ document.querySelector('.tab-btn[data-view="cocina"]')?.addEventListener('click'
 
 // ══ P2: EXPORTAR CSV ═════════════════════════════════
 function exportarCSV() {
-  db.collection('ventas').orderBy('ts','desc').limit(500).get()
+  col('ventas').orderBy('ts','desc').limit(500).get()
     .then(snap => {
       const rows = [['Fecha','Producto','Cantidad','Precio','Total']];
       snap.docs.forEach(d => {
