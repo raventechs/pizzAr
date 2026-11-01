@@ -1347,7 +1347,7 @@ var __rtPWA = (function() {
   /* ════ P1 ROBUSTEZ — 5 TAPS + PIN ════ */
   let tapCount=0,tapTimer=null;
   document.getElementById('logoBtn').addEventListener('click',()=>{tapCount++;clearTimeout(tapTimer);if(tapCount>=5){tapCount=0;abrirModalPin();return;}tapTimer=setTimeout(()=>tapCount=0,1500);});
-  function abrirModalPin(){document.getElementById('pinInput').value='';document.getElementById('pinError').textContent='';document.getElementById('modalPin').classList.add('active');}
+  function abrirModalPin(){ /* sin PIN: abre directo solo con la cuenta admin */ if(window.rtIsAdmin&&window.rtIsAdmin()) document.getElementById('pinConfirmBtn').click(); }
   document.getElementById('pinCancelBtn').addEventListener('click',()=>document.getElementById('modalPin').classList.remove('active'));
   document.getElementById('pinConfirmBtn').addEventListener('click',()=>{
     if((window.rtIsAdmin&&window.rtIsAdmin())){
