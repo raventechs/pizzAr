@@ -1,7 +1,7 @@
 // sw-pizzar.js — Service Worker PizzAR v2.6
 // P3 ROBUSTEZ: cachea shell para uso offline completo
 
-const CACHE_NAME = 'pizzar-v3.0';
+const CACHE_NAME = 'pizzar-v3.1';
 const SHELL = [
   '/',
   '/index.html',
