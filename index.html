@@ -1063,7 +1063,7 @@ var __rtPWA = (function() {
     if(pin.length<4){ document.getElementById('pinCajeroError').textContent='PIN incorrecto'; return; }
     window._pinPend=pin;
     document.getElementById('modalPinCajero').classList.remove('active');
-    auth.signInAnonymously().catch(()=>{ window._pinPend=null; document.getElementById('loginError').textContent='No se pudo ingresar'; });
+    auth.signInAnonymously().catch(()=>{ window._pinPend=null; document.getElementById('loginError').textContent='No se pudo ingresar'; try{document.getElementById('bienError').textContent='No se pudo ingresar';}catch(_){} });
   });
   document.getElementById('copiarLinkCajeroBtn').addEventListener('click',()=>{
     const el=document.getElementById('cfgLinkCajero'); el.select();
