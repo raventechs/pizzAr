@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <!--
   ════════════════════════════════════════════════════════════
-  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v3.2
+  PIZZAR — CAJA REGISTRADORA PARA PIZZERÍAS — v3.3
+  v3.3 (17/11/2026): VERSIÓN DE PRUEBA MÍNIMA para cuentas nuevas (desde el 18/11): Caja con botones precargados e «importe libre», Gastos, Facturación, Cierre del día y pestaña «Adicionales» (pedir comandas, stock, sucursales, panel del dueño, empleados y pedidos por WhatsApp). Las cuentas anteriores no cambian. Raven la activa/desactiva con el interruptor «Versión de prueba mínima» del menú oculto. Sin cambios en reglas ni datos.
   v3.2 (17/11/2026): PANTALLA DE BIENVENIDA POR ROL: botones Dueño / Caja / Cocina; Caja y Cocina entran con el PIN del punto de venta (el dispositivo de cocina queda mostrando solo las comandas). No cambia reglas ni datos.
   v3.1 (8/11/2026): ADICIONAL «VARIAS SUCURSALES»: cada sucursal tiene sus propias ventas, gastos, cierres y comandas (menú, stock y configuración compartidos); el cajero entra con el link de su sucursal. El admin lo activa con botones (1 / Hasta 3 / Todas) en Menú admin → clientes. Sin activar, todo funciona igual que antes (misma ruta de datos). Requiere publicar firestore.rules.
   v3.0 (8/11/2026): TARJETA «TUS PRIMEROS PASOS» en Caja, solo durante la prueba gratis: 4 pasos (cargar pizzas, cobrar la primera venta, mirar Reportes, probar el Cierre de caja) que se tildan solos; se puede ocultar. Se guarda en el celular, no toca datos ni reglas.
@@ -516,6 +517,7 @@ var __rtPWA = (function() {
     <button class="tab-btn" data-view="reportes">Reportes</button>
     <button class="tab-btn" data-view="historial">Historial</button>
     <button class="tab-btn" data-view="dueno" id="rtTabDueno" style="display:none;">🔒 Dueño</button>
+    <button class="tab-btn" data-view="adicionales" id="rtTabAdic" style="display:none;">➕ Adicionales</button>
     <button class="tab-btn" data-view="configuracion">Configuración</button>
   </nav>
 
@@ -534,6 +536,10 @@ var __rtPWA = (function() {
         <div class="carrito-box">
           <h3>🧾 Venta actual</h3>
           <div class="carrito-items" id="carritoItems"><div class="empty-cart">Tocá un producto para agregarlo</div></div>
+          <div id="rtImporteLibre" style="display:none;margin:8px 0">
+            <div style="font-size:0.78rem;color:var(--muted);margin-bottom:4px">¿No está en los botones? Cobrá un importe:</div>
+            <div style="display:flex;gap:8px"><input type="number" id="rtImpLibreInput" inputmode="decimal" min="1" placeholder="Importe $" style="flex:1;padding:10px 12px;border-radius:18px;border:1px solid var(--border);background:var(--bg3);color:var(--crema);font-size:0.95rem"><button class="btn-secondary" id="rtImpLibreBtn" type="button" style="width:auto;padding:10px 16px">+ Agregar</button></div>
+          </div>
           <div class="carrito-total"><span>Total</span><span id="carritoTotal">$0</span></div>
           <div class="pago-row" id="pagoRow">
             <button class="pago-chip active" data-pago="efectivo">Efectivo</button>
@@ -554,6 +560,10 @@ var __rtPWA = (function() {
         <p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.6rem;">Registra el resumen del turno y lo envía por WhatsApp. La caja sigue operativa.</p>
         <button class="btn-cierre" id="btnCerrarCaja">Cerrar caja y enviar resumen por WhatsApp</button>
       </div>
+    </section>
+
+    <section class="view" id="view-adicionales">
+      <div id="rtAdicionales" style="padding:4px 2px"></div>
     </section>
 
     <section class="view" id="view-menu">
@@ -773,6 +783,7 @@ var __rtPWA = (function() {
     <div class="toggle-row"><div class="toggle-row-name">Control de stock</div><label class="switch"><input type="checkbox" id="flagStock"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Gestión de empleados</div><label class="switch"><input type="checkbox" id="flagEmpleados"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">Registro de gastos</div><label class="switch"><input type="checkbox" id="flagGastos"><span class="slider-switch"></span></label></div>
+    <div class="toggle-row"><div class="toggle-row-name">🎯 Versión de prueba mínima</div><label class="switch"><input type="checkbox" id="flagMinimo"><span class="slider-switch"></span></label></div>
     <div class="toggle-row"><div class="toggle-row-name">📋 Comandas (cocina)</div><label class="switch"><input type="checkbox" id="flagComandas"><span class="slider-switch"></span></label></div>
     <div style="font-weight:700;margin:16px 0 6px">👥 Clientes y prueba gratis</div>
     <div id="rtAdmClientes" style="max-height:260px;overflow:auto;font-size:13px">Cargando…</div>
@@ -935,7 +946,7 @@ var __rtPWA = (function() {
   let productos=[], carrito=[], metodoPago='efectivo';
   let categoriaActiva='Todas', grupoActivo=null;
   let productoSeleccionado=null, editandoProductoId=null;
-  let featuresActuales={pedidosOnlineHabilitado:false,stockHabilitado:false,empleadosHabilitado:false,gastosHabilitado:false,comandasHabilitado:false};
+  let featuresActuales={pedidosOnlineHabilitado:false,stockHabilitado:false,empleadosHabilitado:false,gastosHabilitado:false,comandasHabilitado:false,planMinimo:false};
   let rolActual=null, pinCajeroActual='2468', whatsappNumero='';
   let gastosHoy=[], insumos=[], editandoInsumoId=null;
   let ventasHistorialActual=[], estaOnline=navigator.onLine;
@@ -1038,6 +1049,59 @@ var __rtPWA = (function() {
   }
   document.getElementById('bienCaja').addEventListener('click',()=>rtEntrarPin('caja'));
   document.getElementById('bienCocina').addEventListener('click',()=>rtEntrarPin('cocina'));
+  /* ── Versión de prueba mínima (v3.3): Caja con botones precargados + importe libre, Gastos, Facturación, Cierre del día y una pestaña «Adicionales» para pedir el resto por WhatsApp ── */
+  const RT_WA='5491136547592';
+  function rtMin(){ return !!featuresActuales.planMinimo; }
+  const RT_PASOS_ORIG=RT_PASOS.slice();
+  function rtAplicarMinimo(){
+    const m=rtMin(), dueno=(rolActual==='dueño');
+    const th=document.querySelector('.tab-btn[data-view="historial"]'); if(th&&dueno) th.style.display=m?'none':'';
+    const ta=document.getElementById('rtTabAdic'); if(ta) ta.style.display=(m&&dueno)?'':'none';
+    const tr=document.querySelector('.tab-btn[data-view="reportes"]'); if(tr&&dueno) tr.textContent=m?'📊 Facturación':'Reportes';
+    const gs=document.getElementById('gastosSection'); if(gs&&m) gs.style.display='';
+    const il=document.getElementById('rtImporteLibre'); if(il) il.style.display=m?'':'none';
+    RT_PASOS[0]=m?{k:'gasto',t:'Anotá un gasto en «Caja»',ir:function(){rtIrTab('caja');var b=document.getElementById('btnAgregarGasto');if(b)b.scrollIntoView({behavior:'smooth',block:'center'});}}:RT_PASOS_ORIG[0];
+    if(m&&dueno) rtRenderAdicionales();
+    try{ rtChkPintar(); }catch(_){}
+  }
+  function rtPedirAdicional(nombre){
+    const em=(auth.currentUser&&auth.currentUser.email)||'';
+    const t='Hola! Quiero sumar el adicional «'+nombre+'» a mi PizzAR. Mi usuario: '+em;
+    window.open('https://wa.me/'+RT_WA+'?text='+encodeURIComponent(t),'_blank');
+  }
+  window.rtPedirAdicional=rtPedirAdicional;
+  function rtRenderAdicionales(){
+    const box=document.getElementById('rtAdicionales'); if(!box) return;
+    const f=featuresActuales;
+    const L=[
+      ['📋','Comandas de cocina','El pedido llega a la cocina en pantalla o impreso, sin gritar ni escribir papelitos.',!!f.comandasHabilitado],
+      ['📦','Stock e insumos','Controlá lo que tenés y enterate cuándo falta algo.',!!f.stockHabilitado],
+      ['🏪','Varias sucursales','Ventas, gastos y cierres separados por local.',rtLimiteSuc>1],
+      ['📊','Panel del dueño','Mirá todos tus locales juntos, desde tu celular.',!!rtPlusDueno],
+      ['👥','Empleados','Accesos por empleado y control de turnos.',!!f.empleadosHabilitado],
+      ['🛵','Pedidos online y delivery','Tus clientes piden desde su celular.',!!f.pedidosOnlineHabilitado]
+    ];
+    box.innerHTML='<h3 style="font-size:1.05rem;margin:6px 0">➕ Sumá lo que necesites</h3>'
+      +'<p style="font-size:0.84rem;color:var(--muted);margin-bottom:12px">Tu PizzAR ya tiene lo esencial: cobrar, anotar gastos, ver cuánto facturás y cerrar el día. Cuando tu negocio lo pida, se suman estos adicionales. Pedilos y te los activamos sin perder ningún dato.</p>'
+      +L.map(function(a){
+        return '<div style="border:1px solid var(--border);border-radius:16px;padding:12px;margin-bottom:10px;background:var(--bg2)">'
+          +'<div style="font-weight:700">'+a[0]+' '+a[1]+'</div>'
+          +'<div style="font-size:0.8rem;color:var(--muted);margin:4px 0 8px">'+a[2]+'</div>'
+          +(a[3]?'<div style="color:#27ae60;font-weight:700;font-size:0.85rem">✅ Activado</div>'
+               :'<button class="btn-secondary" type="button" style="width:auto;padding:8px 14px;font-size:0.82rem" onclick="rtPedirAdicional(\''+a[1].replace(/'/g,'')+'\')">Pedir este adicional</button>')
+          +'</div>';
+      }).join('');
+  }
+  document.getElementById('rtImpLibreBtn').addEventListener('click',()=>{
+    const inp=document.getElementById('rtImpLibreInput'); const v=parseFloat(inp.value);
+    if(!(v>0)||v>10000000){ toast('Poné un importe mayor a 0'); return; }
+    carrito.push({productoId:'libre',nombre:'Importe',categoria:'Otros',tamano:'Libre',precio:Math.round(v*100)/100,cantidad:1});
+    inp.value=''; renderCarrito();
+  });
+  document.getElementById('modalGastoConfirm').addEventListener('click',()=>{
+    const d=document.getElementById('gastoDesc').value.trim(), m=parseFloat(document.getElementById('gastoMonto').value)||0;
+    if(d&&m>0) setTimeout(()=>{ try{ rtChkMarcar('gasto'); }catch(_){} },400);
+  },true);
   /* Modo cocina: el dispositivo muestra solo las comandas */
   function rtAplicarModo(){
     if(rolActual!=='cajero'||rtModo()!=='cocina') return;
@@ -1393,6 +1457,17 @@ var __rtPWA = (function() {
       document.getElementById('cfgPinCajero').value=c.pinCajero||'2468';try{document.getElementById('cfgPinCajero').placeholder=(c.pinCajero&&String(c.pinCajero).length<6)?'Cambialo a 6 números (más seguro)':'6 números';}catch(_){}document.getElementById('cfgWhatsapp').value=c.whatsapp||'';
       pinCajeroActual=c.pinCajero||'2468';whatsappNumero=c.whatsapp||'';
       featuresActuales={...featuresActuales,...(c.features||{})};
+      /* Versión de prueba mínima (v3.3): solo cuentas NUEVAS (creadas desde el 18/11/2026), una única vez. Las cuentas anteriores no se tocan. */
+      try{
+        const cu=auth.currentUser;
+        if(cu&&!cu.isAnonymous&&rolActual==='dueño'&&!(c.features&&c.features.planMinimo!==undefined)){
+          const alta=cu.metadata&&cu.metadata.creationTime?new Date(cu.metadata.creationTime).getTime():0;
+          if(alta>=new Date('2026-11-18T00:00:00-03:00').getTime()){
+            featuresActuales={...featuresActuales,planMinimo:true,gastosHabilitado:true};
+            col('configuracion').doc('general').set({features:{planMinimo:true,gastosHabilitado:true}},{merge:true}).catch(()=>{});
+          }
+        }
+      }catch(_){}
       document.getElementById('cfgWhatsappSection').style.display=rolActual==='dueño'?'':'none';
       renderPlusStatus();
     });
@@ -1409,6 +1484,7 @@ var __rtPWA = (function() {
   const tabComanda=document.querySelector('.tab-btn[data-view="cocina"]');
   if(tabComanda) tabComanda.style.display=featuresActuales.comandasHabilitado?'':'none';
     const gs=document.getElementById('gastosSection');if(gs)gs.style.display=featuresActuales.gastosHabilitado?'':'none';
+    try{ rtAplicarMinimo(); }catch(_){}
     try{ rtAplicarModo(); }catch(_){}
   }
 
@@ -1461,7 +1537,7 @@ var __rtPWA = (function() {
   document.getElementById('pinConfirmBtn').addEventListener('click',()=>{
     if((window.rtIsAdmin&&window.rtIsAdmin())){
       document.getElementById('modalPin').classList.remove('active');
-      document.getElementById('flagPedidos').checked=!!featuresActuales.pedidosOnlineHabilitado;document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;document.getElementById('flagEmpleados').checked=!!featuresActuales.empleadosHabilitado;document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;document.getElementById('flagComandas').checked=!!featuresActuales.comandasHabilitado;
+      document.getElementById('flagPedidos').checked=!!featuresActuales.pedidosOnlineHabilitado;document.getElementById('flagStock').checked=!!featuresActuales.stockHabilitado;document.getElementById('flagEmpleados').checked=!!featuresActuales.empleadosHabilitado;document.getElementById('flagGastos').checked=!!featuresActuales.gastosHabilitado;document.getElementById('flagComandas').checked=!!featuresActuales.comandasHabilitado;document.getElementById('flagMinimo').checked=!!featuresActuales.planMinimo;
       document.getElementById('modalFeatures').classList.add('active'); rtAdmClientes();
     }else{document.getElementById('pinError').textContent='PIN incorrecto';}
   });
@@ -1593,7 +1669,7 @@ var __rtPWA = (function() {
   };
   document.getElementById('modalFeaturesCancel').addEventListener('click',()=>document.getElementById('modalFeatures').classList.remove('active'));
   document.getElementById('modalFeaturesGuardar').addEventListener('click',()=>{
-    const nuevas={pedidosOnlineHabilitado:document.getElementById('flagPedidos').checked,stockHabilitado:document.getElementById('flagStock').checked,empleadosHabilitado:document.getElementById('flagEmpleados').checked,gastosHabilitado:document.getElementById('flagGastos').checked,comandasHabilitado:document.getElementById('flagComandas').checked};
+    const nuevas={pedidosOnlineHabilitado:document.getElementById('flagPedidos').checked,stockHabilitado:document.getElementById('flagStock').checked,empleadosHabilitado:document.getElementById('flagEmpleados').checked,gastosHabilitado:document.getElementById('flagGastos').checked,comandasHabilitado:document.getElementById('flagComandas').checked,planMinimo:document.getElementById('flagMinimo').checked};
     col('configuracion').doc('general').set({features:nuevas},{merge:true}).then(()=>{featuresActuales=nuevas;renderPlusStatus();toast('Features actualizadas');document.getElementById('modalFeatures').classList.remove('active');});
   });
 
